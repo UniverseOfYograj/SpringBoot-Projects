@@ -62,30 +62,38 @@ git clone https://github.com/UniverseOfYograj/Spring-boot.git
 cd "ToDo App H2db/web-project"
 mvn spring-boot:run
 
-## Open in browser:
+---
 
-http://localhost:8080
+### Open in browser:
 
-## 🔐 Login Credentials
+http://localhost:8081/login
+
+---
+
+### 🔐 Login Credentials
 
 Use any of the following credentials to log in:
 
-## Username: yograj
-## Password: 1234
+####  Username: yograj
+####  Password: 1234
 
-## Username: Yograj Tripathi
-## Password: 1008
+#### Username: Yograj Tripathi
+#### Password: 1008
 
-## 🔒 Security Note
+---
+
+### 🔒 Security Note
 
 This project implements Spring Security with basic authentication
 (No JWT, OAuth or token-based authentication is used).
 Focus is on understanding core Spring Security integration with MVC and JPA.
 
-## 👨‍💻 Author
+---
+
+### 👨‍💻 Author
 
 ### Yograj Tripathi
 Java | Spring Boot | Full Stack Development
 
-## GitHub: https://github.com/UniverseOfYograj
+### GitHub: https://github.com/UniverseOfYograj
 
