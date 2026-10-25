@@ -1,0 +1,68 @@
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+# Generated files and extracted artifacts
+*.class
+*.log
+*.err
+/target/
+/target_test-classes/
+/tmpjar/
+/META-INF/
+/org/
+
+# Local databases and environment secrets
+/localdb/
+.env
+.env.*
+!.env.example
+application-local.properties
+application-local.yml
+application-local.yaml
+
+# IDE settings
+.idea/
+.vscode/
+
+# Local admin seed and temporary utilities
+/admin_seed.sql
+/GenerateExpiredRefresh.java
+/RevokeRefreshToken.java
+/SeedAdmin.java
+/tempAdminHash.java
+/TempHashForAdmin.java
+
+# Local token/debug files
+/expired_refresh.txt
+/revoked_refresh.txt

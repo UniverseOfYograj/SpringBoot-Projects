@@ -1,0 +1,1 @@
+ALTER TABLE stations ALTER COLUMN state DROP NOT NULL;
