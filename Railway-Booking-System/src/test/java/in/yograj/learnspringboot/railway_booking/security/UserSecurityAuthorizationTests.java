@@ -137,7 +137,9 @@ class UserSecurityAuthorizationTests {
     void regularUserCannotReadAnotherUsersProfile() throws Exception {
         mockMvc.perform(get("/api/users/" + regularUser2.getUserId()))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("Access denied: You are not authorized to view this profile"));
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.error").value("Forbidden"))
+                .andExpect(jsonPath("$.message").value("Access denied: You are not authorized to view this profile"));
     }
 
     @Test
@@ -265,7 +267,9 @@ class UserSecurityAuthorizationTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(loginPayload))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error").value("Invalid username/email or password"));
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.error").value("Unauthorized"))
+                .andExpect(jsonPath("$.message").value("Invalid username/email or password"));
     }
 
     @Test
@@ -280,6 +284,8 @@ class UserSecurityAuthorizationTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(loginPayload))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error").value("Invalid username/email or password"));
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.error").value("Unauthorized"))
+                .andExpect(jsonPath("$.message").value("Invalid username/email or password"));
     }
 }

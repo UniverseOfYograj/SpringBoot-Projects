@@ -19,6 +19,7 @@ import in.yograj.learnspringboot.railway_booking.repository.UserRepository;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -30,6 +31,7 @@ public class RailwayBookingApplication {
 
     // Startup se admin user ensure hota hai taaki admin endpoint authentication aur authorization ka live testing ho sake.
     @Bean
+    @ConditionalOnProperty(name = "railway.data-seed.admin.enabled", havingValue = "true", matchIfMissing = false)
     public CommandLineRunner seedAdminUser(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder) {
@@ -51,6 +53,7 @@ public class RailwayBookingApplication {
     }
 
     @Bean
+    @ConditionalOnProperty(name = "railway.data-seed.journey.enabled", havingValue = "true", matchIfMissing = false)
     public CommandLineRunner seedJourneyReferenceData(
             StationRepository stationRepository,
             TrainRepository trainRepository,

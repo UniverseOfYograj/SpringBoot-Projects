@@ -107,8 +107,8 @@ class GitHubRailwayDataImportServiceTests {
                 restClientBuilder, new ObjectMapper(), stationRepository, trainRepository,
                 routeRepository, stopRepository);
 
-        var first = service.importData(0,1);
-        var second = service.importData(0,1);
+        var first = service.importData(1, 1);
+        var second = service.importData(1, 1);
 
         assertEquals(2, first.stationsProcessed());
         assertEquals(1, first.stationsInserted());
