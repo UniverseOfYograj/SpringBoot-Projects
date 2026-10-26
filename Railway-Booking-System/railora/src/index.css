@@ -1,0 +1,98 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* -------------------------------------------------------
+   Base layer: typography, resets, accessibility defaults
+   ------------------------------------------------------- */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  body {
+    @apply bg-surface-base text-ink-primary font-sans text-sm sm:text-base leading-normal;
+  }
+
+  /* Accessible focus indicators for keyboard navigation */
+  :focus-visible {
+    outline: 2px solid #0F766E;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /* Dark background focus ring override */
+  .focus-ring-dark:focus-visible {
+    outline: 2px solid #2DD4BF;
+    outline-offset: 2px;
+  }
+
+  /* Respect system reduced-motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Custom subtle scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #F1F5F9;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #CBD5E1;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94A3B8;
+  }
+}
+
+/* -------------------------------------------------------
+   Component layer: reusable design system utility classes
+   ------------------------------------------------------- */
+@layer components {
+  /* Interactive transition shorthand */
+  .transition-interact {
+    @apply transition-all duration-[150ms] ease-out motion-reduce:transition-none;
+  }
+
+  /* Surface card standard */
+  .surface-card {
+    @apply bg-surface-card rounded-xl border border-surface-border shadow-card
+           transition-interact hover:shadow-card-hover;
+  }
+
+  /* Skip to content link (accessibility) */
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100]
+           focus:px-4 focus:py-2.5 focus:rounded-md focus:bg-navy-700 focus:text-white
+           focus:shadow-modal focus:ring-2 focus:ring-teal-400 focus:ring-offset-2;
+  }
+}

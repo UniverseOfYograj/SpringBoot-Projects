@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Environment files — never commit real secrets
+.env
+.env.local
+.env.production
+.env*.local
+
+# Editor & OS
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.idea/
+
+# TypeScript incremental compilation
+*.tsbuildinfo
+
+# Vitest / test coverage
+coverage/
+
+# Vite cache
+.vite/
