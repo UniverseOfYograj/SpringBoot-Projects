@@ -294,7 +294,7 @@ class BookingPaymentLifecycleTests {
     }
 
     @Test
-    void duplicatePayment_withSameIdempotencyKey_returnsIdempotentResponse() {
+    void duplicatePayment_withSameIdempotencyKey_returnsIdempotentResponseAfterUnknownOutcome() {
         User user = createUser("pay-idempotent");
         JourneySeatInventory seatInv = inventories.get(3);
         BookingResponseDTO created = createPendingBookingForSeat(seatInv, user, 10);
@@ -313,6 +313,25 @@ class BookingPaymentLifecycleTests {
         // Exactly 1 transaction recorded in DB
         List<PaymentTransaction> txns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
         assertEquals(1, txns.size());
+    }
+
+    @Test
+    void duplicateFailedPayment_withSameIdempotencyKey_returnsSameFailedTransaction() {
+        User user = createUser("pay-failed-idempotent");
+        JourneySeatInventory seatInv = inventories.get(0);
+        BookingResponseDTO created = createPendingBookingForSeat(seatInv, user, 10);
+        PaymentRequestDTO request = new PaymentRequestDTO("MOCK_UPI", "idem-failed-key", true);
+
+        PaymentResponseDTO first = bookingService.processPayment(
+                created.bookingRef(), request, user.getUsername());
+        PaymentResponseDTO repeated = bookingService.processPayment(
+                created.bookingRef(), request, user.getUsername());
+
+        assertEquals("FAILED", first.paymentStatus());
+        assertEquals(first.transactionRef(), repeated.transactionRef());
+        assertEquals("FAILED", repeated.paymentStatus());
+        assertEquals("PENDING_PAYMENT", repeated.bookingStatus());
+        assertEquals(1, paymentTransactionRepository.findByBookingRef(created.bookingRef()).size());
     }
 
     @Test
@@ -659,6 +678,261 @@ class BookingPaymentLifecycleTests {
         txn2.setIdempotencyKey(null);
         txn2.setCreatedAt(LocalDateTime.now());
         assertDoesNotThrow(() -> paymentTransactionRepository.saveAndFlush(txn2));
+    }
+
+    @Test
+    void concurrentBookingCreation_forSameSeatHold_onlyOneSucceedsAndPreventsDuplicatePendingBooking() throws Exception {
+        User user = createUser("conc-book-user");
+        JourneySeatInventory seatInv = inventories.get(0);
+
+        // User holds the seat
+        seatInventoryService.holdSeat(journeyId, seatInv.getSeat().getSeatId(), 10,
+                runStops.get(0).getJourneyStopId(), runStops.get(2).getJourneyStopId(), user.getUsername());
+
+        CreateBookingRequestDTO request = new CreateBookingRequestDTO(
+                journeyId, seatInv.getSeat().getSeatId(),
+                runStops.get(0).getJourneyStopId(), runStops.get(2).getJourneyStopId());
+
+        int threadCount = 4;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch startSignal = new CountDownLatch(1);
+        List<String> outcomes = Collections.synchronizedList(new ArrayList<>());
+        List<BookingResponseDTO> successfulBookings = Collections.synchronizedList(new ArrayList<>());
+
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (int i = 0; i < threadCount; i++) {
+                futures.add(executor.submit(() -> {
+                    try {
+                        startSignal.await();
+                        BookingResponseDTO resp = bookingService.createBooking(request, user.getUsername());
+                        successfulBookings.add(resp);
+                        outcomes.add("SUCCESS");
+                    } catch (BadRequestException bre) {
+                        outcomes.add("BadRequestException: " + bre.getMessage());
+                    } catch (Exception e) {
+                        outcomes.add(e.getClass().getSimpleName());
+                    }
+                }));
+            }
+
+            startSignal.countDown();
+            for (Future<?> f : futures) {
+                f.get();
+            }
+
+            // Exactly ONE booking request must succeed
+            assertEquals(1, successfulBookings.size(), "Only one concurrent createBooking call must succeed");
+            assertEquals("PENDING_PAYMENT", successfulBookings.get(0).bookingStatus());
+
+            // The remaining threads must be rejected with BadRequestException
+            long badRequestCount = outcomes.stream()
+                    .filter(o -> o.contains("BadRequestException: A pending booking already exists for this seat hold"))
+                    .count();
+            assertEquals(threadCount - 1, badRequestCount, "All other concurrent attempts must be rejected with exact BadRequestException message");
+
+            // Verify in database: exactly 1 booking exists for this seat allocation
+            List<Booking> bookings = bookingRepository.findAll().stream()
+                    .filter(b -> b.getJourney().getJourneyId().equals(journeyId) && b.getSeat().getSeatId().equals(seatInv.getSeat().getSeatId()))
+                    .toList();
+            assertEquals(1, bookings.size(), "Database must contain exactly 1 booking record for this seat allocation");
+
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void expiredHold_allowsSubsequentUserToHoldBookAndConfirm_rejectsOriginalUserPayment() {
+        User userA = createUser("exp-reuse-user-a");
+        User userB = createUser("exp-reuse-user-b");
+        JourneySeatInventory seatInv = inventories.get(1);
+
+        // 1. User A holds seat and creates booking
+        BookingResponseDTO bookingA = createPendingBookingForSeat(seatInv, userA, 5);
+        assertEquals("PENDING_PAYMENT", bookingA.bookingStatus());
+
+        Booking bA = bookingRepository.findByBookingRef(bookingA.bookingRef()).orElseThrow();
+        SeatAllocation allocA = bA.getSeatAllocation();
+        assertEquals("HOLD", allocA.getStatus());
+
+        // 2. User A's hold expires
+        allocA.setHoldExpiresAt(LocalDateTime.now().minusMinutes(5));
+        allocationRepository.saveAndFlush(allocA);
+
+        // 3. User B holds the exact same seat and segment
+        var holdB = seatInventoryService.holdSeat(journeyId, seatInv.getSeat().getSeatId(), 10,
+                runStops.get(0).getJourneyStopId(), runStops.get(2).getJourneyStopId(), userB.getUsername());
+        assertNotNull(holdB);
+        assertEquals("HOLD", holdB.status());
+
+        // Verify User A's old allocation was normalized to EXPIRED
+        SeatAllocation refreshedAllocA = allocationRepository.findById(allocA.getSeatAllocationId()).orElseThrow();
+        assertEquals("EXPIRED", refreshedAllocA.getStatus());
+
+        // 4. User B creates booking and completes payment
+        BookingResponseDTO bookingB = bookingService.createBooking(new CreateBookingRequestDTO(
+                journeyId, seatInv.getSeat().getSeatId(),
+                runStops.get(0).getJourneyStopId(), runStops.get(2).getJourneyStopId()),
+                userB.getUsername());
+        assertEquals("PENDING_PAYMENT", bookingB.bookingStatus());
+
+        PaymentResponseDTO paymentB = bookingService.processPayment(
+                bookingB.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "idemp-user-b-pay", false), userB.getUsername());
+        assertEquals("SUCCESS", paymentB.paymentStatus());
+        assertEquals("CONFIRMED", paymentB.bookingStatus());
+
+        // 5. User A now attempts late payment on their expired booking
+        SeatHoldExpiredException ex = assertThrows(SeatHoldExpiredException.class, () ->
+                bookingService.processPayment(
+                        bookingA.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "idemp-user-a-late", false), userA.getUsername())
+        );
+        assertEquals("Seat hold has expired. Booking can no longer be confirmed.", ex.getMessage());
+
+        // 6. Verify database state integrity
+        Booking finalBookingA = bookingRepository.findByBookingRef(bookingA.bookingRef()).orElseThrow();
+        assertEquals("EXPIRED", finalBookingA.getBookingStatus());
+        assertEquals("EXPIRED", finalBookingA.getPaymentStatus());
+
+        Booking finalBookingB = bookingRepository.findByBookingRef(bookingB.bookingRef()).orElseThrow();
+        assertEquals("CONFIRMED", finalBookingB.getBookingStatus());
+        assertEquals("SUCCESS", finalBookingB.getPaymentStatus());
+        assertEquals("BOOKED", finalBookingB.getSeatAllocation().getStatus());
+
+        // Exactly one CONFIRMED booking exists in total for this journey seat
+        List<Booking> confirmedBookings = bookingRepository.findAll().stream()
+                .filter(b -> b.getJourney().getJourneyId().equals(journeyId)
+                        && b.getSeat().getSeatId().equals(seatInv.getSeat().getSeatId())
+                        && "CONFIRMED".equals(b.getBookingStatus()))
+                .toList();
+        assertEquals(1, confirmedBookings.size());
+        assertEquals(bookingB.bookingRef(), confirmedBookings.get(0).getBookingRef());
+    }
+
+    @Test
+    void repeatedPaymentFailures_preserveAllFailedTransactions_andHoldExpiryPreventsFurtherRetry() {
+        User user = createUser("multi-fail-user");
+        JourneySeatInventory seatInv = inventories.get(2);
+
+        // User holds seat and creates booking
+        BookingResponseDTO created = createPendingBookingForSeat(seatInv, user, 5);
+
+        // Attempt 1: Failed payment
+        PaymentResponseDTO fail1 = bookingService.processPayment(
+                created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "fail-key-1", true), user.getUsername());
+        assertEquals("FAILED", fail1.paymentStatus());
+        assertEquals("PENDING_PAYMENT", fail1.bookingStatus());
+
+        // Attempt 2: Second failed payment with a new idempotency key
+        PaymentResponseDTO fail2 = bookingService.processPayment(
+                created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "fail-key-2", true), user.getUsername());
+        assertEquals("FAILED", fail2.paymentStatus());
+        assertEquals("PENDING_PAYMENT", fail2.bookingStatus());
+
+        // Allocation must STILL be on HOLD during the active hold window
+        Booking bookingAfterFails = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        assertEquals("PENDING_PAYMENT", bookingAfterFails.getBookingStatus());
+        assertEquals("HOLD", bookingAfterFails.getSeatAllocation().getStatus());
+
+        List<PaymentTransaction> txnsAfterFails = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+        assertEquals(2, txnsAfterFails.size());
+        assertTrue(txnsAfterFails.stream().allMatch(t -> "FAILED".equals(t.getStatus())));
+
+        // Now hold window expires
+        SeatAllocation alloc = bookingAfterFails.getSeatAllocation();
+        alloc.setHoldExpiresAt(LocalDateTime.now().minusMinutes(2));
+        allocationRepository.saveAndFlush(alloc);
+
+        // Attempt 3: User tries to retry payment after hold has expired
+        assertThrows(SeatHoldExpiredException.class, () ->
+                bookingService.processPayment(
+                        created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "fail-key-3", false), user.getUsername())
+        );
+
+        // Booking and allocation must now be strictly EXPIRED
+        Booking finalBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        assertEquals("EXPIRED", finalBooking.getBookingStatus());
+        assertEquals("EXPIRED", finalBooking.getPaymentStatus());
+        assertEquals("EXPIRED", finalBooking.getSeatAllocation().getStatus());
+
+        // Database preserves all 3 transactions (2 failed payment attempts + 1 expired hold transaction)
+        List<PaymentTransaction> allTxns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+        assertEquals(3, allTxns.size());
+        assertTrue(allTxns.stream().allMatch(t -> "FAILED".equals(t.getStatus())));
+
+        // Explicitly verify transaction failure reasons and idempotency keys
+        PaymentTransaction t1 = allTxns.stream().filter(t -> "fail-key-1".equals(t.getIdempotencyKey())).findFirst().orElseThrow();
+        assertEquals("Simulated payment failure", t1.getFailureReason());
+
+        PaymentTransaction t2 = allTxns.stream().filter(t -> "fail-key-2".equals(t.getIdempotencyKey())).findFirst().orElseThrow();
+        assertEquals("Simulated payment failure", t2.getFailureReason());
+
+        PaymentTransaction t3 = allTxns.stream().filter(t -> "fail-key-3".equals(t.getIdempotencyKey())).findFirst().orElseThrow();
+        assertEquals("Seat hold has expired", t3.getFailureReason());
+    }
+
+    @Test
+    void highConcurrencyDuplicatePaymentBurst_onlyOneConfirms_allOthersReceiveConflict409() throws Exception {
+        User user = createUser("burst-pay-user");
+        JourneySeatInventory seatInv = inventories.get(3);
+
+        BookingResponseDTO created = createPendingBookingForSeat(seatInv, user, 10);
+
+        int burstThreads = 6;
+        ExecutorService executor = Executors.newFixedThreadPool(burstThreads);
+        CountDownLatch startSignal = new CountDownLatch(1);
+        List<String> outcomes = Collections.synchronizedList(new ArrayList<>());
+        List<PaymentResponseDTO> successfulResponses = Collections.synchronizedList(new ArrayList<>());
+
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (int i = 0; i < burstThreads; i++) {
+                final String idempKey = "burst-key-" + i;
+                futures.add(executor.submit(() -> {
+                    try {
+                        startSignal.await();
+                        PaymentResponseDTO resp = bookingService.processPayment(
+                                created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", idempKey, false), user.getUsername());
+                        successfulResponses.add(resp);
+                        outcomes.add("SUCCESS");
+                    } catch (IllegalStateException ise) {
+                        outcomes.add("IllegalStateException: " + ise.getMessage());
+                    } catch (Exception e) {
+                        outcomes.add(e.getClass().getSimpleName());
+                    }
+                }));
+            }
+
+            startSignal.countDown();
+            for (Future<?> f : futures) {
+                f.get();
+            }
+
+            // Exactly ONE thread confirms the booking
+            assertEquals(1, successfulResponses.size(), "Exactly one thread in the burst must succeed");
+            assertEquals("CONFIRMED", successfulResponses.get(0).bookingStatus());
+            assertEquals("SUCCESS", successfulResponses.get(0).paymentStatus());
+
+            // The remaining threads must encounter IllegalStateException ("Booking has already been confirmed")
+            long conflictCount = outcomes.stream()
+                    .filter(o -> o.contains("IllegalStateException: Booking has already been confirmed"))
+                    .count();
+            assertEquals(burstThreads - 1, conflictCount, "All other threads must receive IllegalStateException with exact message");
+
+            // Database state must be strictly consistent
+            Booking booking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+            assertEquals("CONFIRMED", booking.getBookingStatus());
+            assertEquals("SUCCESS", booking.getPaymentStatus());
+            assertEquals("BOOKED", booking.getSeatAllocation().getStatus());
+
+            // Exactly ONE transaction record exists in the database with status SUCCESS
+            List<PaymentTransaction> txns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+            assertEquals(1, txns.size(), "Database must contain exactly 1 transaction record despite high-concurrency burst");
+            assertEquals("SUCCESS", txns.get(0).getStatus());
+
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     private Station station(String code, String name) {

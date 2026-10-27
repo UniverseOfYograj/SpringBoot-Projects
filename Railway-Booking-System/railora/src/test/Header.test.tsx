@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Header from '@/components/layout/Header';
+import { AuthProvider } from '@/features/auth/AuthContext';
 
 function renderWithProviders(ui: React.ReactElement) {
   const queryClient = new QueryClient({
@@ -10,7 +11,9 @@ function renderWithProviders(ui: React.ReactElement) {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter>
+        <AuthProvider>{ui}</AuthProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -27,6 +30,7 @@ describe('Header', () => {
     renderWithProviders(<Header />);
     expect(screen.getAllByText('Search Trains').length).toBeGreaterThan(0);
     expect(screen.getAllByText('My Bookings').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Tatkal Queue').length).toBeGreaterThan(0);
   });
 
   it('has a visible header landmark', () => {

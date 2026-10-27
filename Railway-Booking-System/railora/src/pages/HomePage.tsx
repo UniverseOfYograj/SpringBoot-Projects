@@ -12,6 +12,7 @@ import {
   Sparkles,
   Database,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
@@ -117,12 +118,11 @@ export default function HomePage() {
               <Button
                 variant="secondary"
                 size="lg"
-                disabled
-                title="Authentication will activate in Stage 4"
+                onClick={() => navigate(ROUTES.REGISTER)}
                 leftIcon={<Lock size={16} />}
                 className="w-full sm:w-auto text-white border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/40 active:bg-white/15"
               >
-                Account Portal (Stage 4)
+                Get Started
               </Button>
             </div>
 
@@ -188,6 +188,18 @@ export default function HomePage() {
               </Card>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className="bg-white py-12" aria-label="Account access">
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-4 text-center sm:flex-row sm:px-6 sm:text-left lg:px-8">
+          <p className="text-sm text-ink-muted">Already travelling with Railora?</p>
+          <Link
+            to={ROUTES.LOGIN}
+            className="rounded-lg px-4 py-2 text-sm font-semibold text-teal-700 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+          >
+            Sign in to your account
+          </Link>
         </div>
       </section>
 
@@ -303,14 +315,14 @@ export default function HomePage() {
           <div className="rounded-xl border border-teal-500/30 bg-teal-50/60 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <Badge variant="teal" size="sm">Stage 3 Active</Badge>
+                <Badge variant="teal" size="sm">Authentication Active</Badge>
                 <h3 className="text-sm font-bold text-teal-900">
-                  Train Timetable Search & Read-Only API Integration
+                  Account Access & Train Timetable Search
                 </h3>
               </div>
               <p className="text-xs sm:text-sm text-teal-800/80 leading-relaxed max-w-2xl">
-                Explore live scheduled train routes directly backed by Spring Boot and PostgreSQL.
-                Ready for user testing before Stage 4 Authentication & User Management.
+                Sign in to your account or explore live scheduled train routes backed by Spring Boot
+                and PostgreSQL. Booking flows remain in progress.
               </p>
             </div>
             <div className="shrink-0">

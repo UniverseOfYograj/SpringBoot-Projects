@@ -9,6 +9,7 @@ import { TrainList } from '@/features/search/components/TrainList';
 import TrainSearchPage from '@/pages/TrainSearchPage';
 import {
   validateStationCode,
+  validateTravelDate,
   calculateDuration,
   formatTimeString,
 } from '@/features/search/utils';
@@ -85,6 +86,34 @@ describe('Train Search — Utility Functions', () => {
       expect(validateStationCode('HWH')).toBeNull();
       expect(validateStationCode('CSMT')).toBeNull();
       expect(validateStationCode('bct')).toBeNull(); // case normalization
+    });
+  });
+
+  describe('validateTravelDate', () => {
+    it('returns null when travel date is empty or whitespace', () => {
+      expect(validateTravelDate('')).toBeNull();
+      expect(validateTravelDate('   ')).toBeNull();
+    });
+
+    it('returns error when date format is not YYYY-MM-DD', () => {
+      expect(validateTravelDate('2026/12/31')).toBe('Travel date must be in YYYY-MM-DD format');
+      expect(validateTravelDate('12-31-2026')).toBe('Travel date must be in YYYY-MM-DD format');
+      expect(validateTravelDate('not-a-date')).toBe('Travel date must be in YYYY-MM-DD format');
+    });
+
+    it('returns error when travel date is in the past', () => {
+      expect(validateTravelDate('2020-01-01')).toBe('Travel date cannot be in the past');
+    });
+
+    it('returns null for today and future dates', () => {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const todayStr = `${yyyy}-${mm}-${dd}`;
+
+      expect(validateTravelDate(todayStr)).toBeNull();
+      expect(validateTravelDate('2099-12-31')).toBeNull();
     });
   });
 
@@ -201,6 +230,22 @@ describe('TrainSearchForm Component', () => {
       })
     );
   });
+
+  it('rejects past travel date and prevents search submission', async () => {
+    const user = userEvent.setup();
+    const handleSearch = vi.fn();
+    render(<TrainSearchForm initialFrom="HWH" initialTo="NDLS" onSearch={handleSearch} />);
+
+    const dateInput = screen.getByLabelText(/^Travel Date/i);
+    await user.clear(dateInput);
+    await user.type(dateInput, '2020-01-01');
+
+    const submitBtn = screen.getByRole('button', { name: /Search Trains/i });
+    await user.click(submitBtn);
+
+    expect(handleSearch).not.toHaveBeenCalled();
+    expect(screen.getByText(/Travel date cannot be in the past/i)).toBeInTheDocument();
+  });
 });
 
 describe('TrainCard Component', () => {
@@ -227,8 +272,8 @@ describe('TrainCard Component', () => {
     // Travel Date context
     expect(screen.getByText(/Target: 2026-11-01/i)).toBeInTheDocument();
 
-    // Stage 5 readiness button
-    expect(screen.getByRole('button', { name: /Check Availability Stage 5/i })).toBeDisabled();
+    // Stage 5 seat selection button is active and enabled
+    expect(screen.getByRole('button', { name: /Book Seats|Select seats/i })).toBeEnabled();
   });
 });
 
@@ -325,6 +370,43 @@ describe('TrainList Component', () => {
     expect(screen.getByText('HOWRAH RAJDHANI')).toBeInTheDocument();
     expect(screen.getByText('KOLKATA RAJDHANI')).toBeInTheDocument();
   });
+
+  it('renders validation error alert instead of false empty state when validationError is passed', () => {
+    render(
+      <TrainList
+        trains={[]}
+        isLoading={false}
+        isError={false}
+        hasSearched={true}
+        fromCode="HWH"
+        toCode="HWH"
+        validationError="Origin and destination stations cannot be the same."
+        onRetry={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText(/Invalid Search Parameters/i)).toBeInTheDocument();
+    expect(screen.getByText(/Origin and destination stations cannot be the same\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/No direct trains found/i)).not.toBeInTheDocument();
+  });
+
+  it('renders background refresh indicator when isFetching is true', () => {
+    render(
+      <TrainList
+        trains={MOCK_TRAINS}
+        isLoading={false}
+        isFetching={true}
+        isError={false}
+        hasSearched={true}
+        fromCode="HWH"
+        toCode="NDLS"
+        onRetry={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(/Updating schedules…/i)).toBeInTheDocument();
+  });
 });
 
 describe('TrainSearchPage Integration', () => {
@@ -346,7 +428,7 @@ describe('TrainSearchPage Integration', () => {
     );
 
     // Initial check: API was invoked with params from URL
-    expect(searchTrainsSpy).toHaveBeenCalledWith('HWH', 'NDLS');
+    expect(searchTrainsSpy).toHaveBeenCalledWith('HWH', 'NDLS', expect.anything());
 
     // Wait for results to render
     await waitFor(() => {
@@ -355,5 +437,46 @@ describe('TrainSearchPage Integration', () => {
 
     expect(screen.getByText('12301')).toBeInTheDocument();
     expect(screen.getByLabelText(/Found 2 direct trains from HWH to NDLS/i)).toBeInTheDocument();
+  });
+
+  it('displays invalid search alert when URL contains identical origin and destination', async () => {
+    const searchTrainsSpy = vi.spyOn(api, 'searchTrains');
+    const queryClient = createTestQueryClient();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/search?from=HWH&to=HWH']}>
+          <TrainSearchPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    // Should not invoke search API
+    expect(searchTrainsSpy).not.toHaveBeenCalled();
+
+    // Should show the validation alert, NOT "No direct trains found"
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText(/Invalid Search Parameters/i)).toBeInTheDocument();
+    expect(screen.getByText(/Origin and destination stations cannot be the same\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/No direct trains found/i)).not.toBeInTheDocument();
+  });
+
+  it('displays invalid search alert when URL contains invalid station code syntax', async () => {
+    const searchTrainsSpy = vi.spyOn(api, 'searchTrains');
+    const queryClient = createTestQueryClient();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/search?from=123&to=NDLS']}>
+          <TrainSearchPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(searchTrainsSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText(/Invalid Search Parameters/i)).toBeInTheDocument();
+    expect(screen.getByText(/Invalid origin station code/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No direct trains found/i)).not.toBeInTheDocument();
   });
 });

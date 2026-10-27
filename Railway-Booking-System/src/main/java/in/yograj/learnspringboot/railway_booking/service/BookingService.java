@@ -1,6 +1,7 @@
 package in.yograj.learnspringboot.railway_booking.service;
 
 import in.yograj.learnspringboot.railway_booking.dto.BookingDetailResponseDTO;
+import in.yograj.learnspringboot.railway_booking.dto.BookingMode;
 import in.yograj.learnspringboot.railway_booking.dto.BookingResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.CreateBookingRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PageResponseDTO;
@@ -47,23 +48,35 @@ public class BookingService {
     private final SeatInventoryService seatInventoryService;
     private final UserRepository userRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
+    private final TatkalJourneyPolicy tatkalJourneyPolicy;
+    private final TatkalAdmissionPassService tatkalAdmissionPassService;
 
     public BookingService(BookingRepository bookingRepository,
                           JourneySeatInventoryRepository inventoryRepository,
                           SeatAllocationRepository allocationRepository,
                           SeatInventoryService seatInventoryService,
                           UserRepository userRepository,
-                          PaymentTransactionRepository paymentTransactionRepository) {
+                          PaymentTransactionRepository paymentTransactionRepository,
+                          TatkalJourneyPolicy tatkalJourneyPolicy,
+                          TatkalAdmissionPassService tatkalAdmissionPassService) {
         this.bookingRepository = bookingRepository;
         this.inventoryRepository = inventoryRepository;
         this.allocationRepository = allocationRepository;
         this.seatInventoryService = seatInventoryService;
         this.userRepository = userRepository;
         this.paymentTransactionRepository = paymentTransactionRepository;
+        this.tatkalJourneyPolicy = tatkalJourneyPolicy;
+        this.tatkalAdmissionPassService = tatkalAdmissionPassService;
     }
 
     @Transactional
     public BookingResponseDTO createBooking(CreateBookingRequestDTO request, String username) {
+        return createBooking(request, username, null);
+    }
+
+    @Transactional
+    public BookingResponseDTO createBooking(CreateBookingRequestDTO request, String username,
+                                             String admissionPass) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
 
@@ -94,6 +107,25 @@ public class BookingService {
         // Main hold owner verify karta hu, taaki dusre user ka segment hold booking me na badle.
         if (!allocation.getHoldOwner().getUserId().equals(user.getUserId())) {
             throw new AccessDeniedException("Seat hold belongs to another user");
+        }
+        if (allocation.getBookingMode() != request.bookingMode()) {
+            throw new BadRequestException("Booking mode must match the mode used to acquire the seat hold");
+        }
+        boolean tatkalJourney = tatkalJourneyPolicy.isTatkalJourney(request.journeyId());
+        if (tatkalJourney != (allocation.getBookingMode() == BookingMode.TATKAL)) {
+            throw new BadRequestException("Seat hold booking mode is not valid for this journey");
+        }
+        if (allocation.getBookingMode() == BookingMode.TATKAL
+                && (allocation.getAdmissionEntryId() == null || allocation.getAdmissionEntryId().isBlank())) {
+            throw new BadRequestException("Tatkal booking requires a seat hold created with an admitted queue pass");
+        }
+        if (allocation.getBookingMode() == BookingMode.TATKAL && admissionPass != null && !admissionPass.isBlank()) {
+            TatkalAdmissionPassService.AdmissionClaims claims = tatkalAdmissionPassService
+                    .verifyForExistingHold(admissionPass, username, request.journeyId());
+            if (!claims.queueEntryId().equals(allocation.getAdmissionEntryId())) {
+                throw new in.yograj.learnspringboot.railway_booking.exception.InvalidAdmissionPassException(
+                        "Tatkal pass does not match the active seat hold");
+            }
         }
 
         if (bookingRepository.existsBySeatAllocation_SeatAllocationIdAndBookingStatus(

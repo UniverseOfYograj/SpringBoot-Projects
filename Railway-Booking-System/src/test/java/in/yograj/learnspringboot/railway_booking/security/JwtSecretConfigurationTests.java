@@ -112,7 +112,9 @@ class JwtSecretConfigurationTests {
     @DisplayName("Spring ApplicationContext fails startup when access secret is missing")
     void springContextFailsWhenAccessSecretMissing() {
         contextRunner
-                .withPropertyValues("jwt.refresh-secret=" + VALID_REFRESH_SECRET)
+                .withPropertyValues(
+                        "jwt.access-secret=",
+                        "jwt.refresh-secret=" + VALID_REFRESH_SECRET)
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
@@ -126,7 +128,9 @@ class JwtSecretConfigurationTests {
     @DisplayName("Spring ApplicationContext fails startup when refresh secret is missing")
     void springContextFailsWhenRefreshSecretMissing() {
         contextRunner
-                .withPropertyValues("jwt.access-secret=" + VALID_ACCESS_SECRET)
+                .withPropertyValues(
+                        "jwt.access-secret=" + VALID_ACCESS_SECRET,
+                        "jwt.refresh-secret=")
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())

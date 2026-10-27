@@ -4,6 +4,7 @@ import { ROUTES } from '@/lib/constants';
 import { TrainSearchForm } from '@/features/search/components/TrainSearchForm';
 import { TrainList } from '@/features/search/components/TrainList';
 import { useTrainSearch } from '@/features/search/hooks/useTrainSearch';
+import { validateStationCode } from '@/features/search/utils';
 
 export default function TrainSearchPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -14,14 +15,31 @@ export default function TrainSearchPage() {
 
   const hasQueryParams = Boolean(fromParam && toParam);
 
+  const fromError = fromParam ? validateStationCode(fromParam) : null;
+  const toError = toParam ? validateStationCode(toParam) : null;
+  const isSameStation = Boolean(fromParam && toParam && fromParam === toParam);
+
+  const validationError = hasQueryParams
+    ? isSameStation
+      ? 'Origin and destination stations cannot be the same.'
+      : fromError
+        ? `Invalid origin station code: ${fromError}`
+        : toError
+          ? `Invalid destination station code: ${toError}`
+          : null
+    : null;
+
+  const isSearchValid = hasQueryParams && !validationError;
+
   const {
     data: trains,
     isLoading,
+    isFetching,
     isError,
     error,
     refetch,
   } = useTrainSearch(fromParam, toParam, {
-    enabled: hasQueryParams,
+    enabled: isSearchValid,
   });
 
   const handleSearch = (params: { from: string; to: string; date: string }) => {
@@ -36,7 +54,7 @@ export default function TrainSearchPage() {
   };
 
   const handleSwapAndSearch = () => {
-    if (!fromParam || !toParam) return;
+    if (!fromParam || !toParam || fromParam === toParam) return;
     const nextParams: Record<string, string> = {
       from: toParam,
       to: fromParam,
@@ -98,7 +116,7 @@ export default function TrainSearchPage() {
             initialFrom={fromParam}
             initialTo={toParam}
             initialDate={dateParam}
-            isLoading={isLoading}
+            isLoading={isLoading || isFetching}
             onSearch={handleSearch}
           />
         </section>
@@ -111,12 +129,14 @@ export default function TrainSearchPage() {
           <TrainList
             trains={trains}
             isLoading={isLoading}
+            isFetching={isFetching}
             isError={isError}
             error={error}
             onRetry={() => {
               void refetch();
             }}
             hasSearched={hasQueryParams}
+            validationError={validationError}
             fromCode={fromParam}
             toCode={toParam}
             travelDate={dateParam}

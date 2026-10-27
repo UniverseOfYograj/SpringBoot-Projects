@@ -1,5 +1,6 @@
 package in.yograj.learnspringboot.railway_booking.entity;
 
+import in.yograj.learnspringboot.railway_booking.dto.BookingMode;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -29,12 +30,25 @@ public class SeatAllocation {
     @JoinColumn(name = "alighting_journey_stop_id", nullable = false)
     private JourneyStop alightingStop;
 
+    @Column(name = "from_stop_seq", nullable = false)
+    private Integer fromStopSeq;
+
+    @Column(name = "to_stop_seq", nullable = false)
+    private Integer toStopSeq;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "hold_user_id", nullable = false)
     private User holdOwner;
 
     @Column(name = "status", nullable = false, length = 30)
     private String status = "HOLD";
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "booking_mode", nullable = false, length = 20)
+    private BookingMode bookingMode = BookingMode.GENERAL;
+
+    @Column(name = "admission_entry_id", length = 36)
+    private String admissionEntryId;
 
     @Column(name = "hold_expires_at")
     private LocalDateTime holdExpiresAt;
@@ -77,6 +91,22 @@ public class SeatAllocation {
         this.alightingStop = alightingStop;
     }
 
+    public Integer getFromStopSeq() {
+        return fromStopSeq;
+    }
+
+    public void setFromStopSeq(Integer fromStopSeq) {
+        this.fromStopSeq = fromStopSeq;
+    }
+
+    public Integer getToStopSeq() {
+        return toStopSeq;
+    }
+
+    public void setToStopSeq(Integer toStopSeq) {
+        this.toStopSeq = toStopSeq;
+    }
+
     public User getHoldOwner() {
         return holdOwner;
     }
@@ -91,6 +121,22 @@ public class SeatAllocation {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public BookingMode getBookingMode() {
+        return bookingMode;
+    }
+
+    public void setBookingMode(BookingMode bookingMode) {
+        this.bookingMode = bookingMode;
+    }
+
+    public String getAdmissionEntryId() {
+        return admissionEntryId;
+    }
+
+    public void setAdmissionEntryId(String admissionEntryId) {
+        this.admissionEntryId = admissionEntryId;
     }
 
     public LocalDateTime getHoldExpiresAt() {

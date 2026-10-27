@@ -37,5 +37,11 @@ npm run lint      # TypeScript type-check
 ## Development notes
 
 - The Vite dev server proxies `/api/*` → `http://localhost:8080`. No CORS changes required.
-- Authentication (Stage 4), train search (Stage 3), and booking flows (Stage 5) are pending.
+- Authentication and train search are available; booking flows remain pending.
 - All secrets are resolved from environment variables on the backend; no credentials in this repo.
+
+## Authentication session behavior
+
+- Access and refresh tokens are held in memory only. Refreshing the browser clears the current session until the backend's final refresh-cookie design is available.
+- Signing out clears the in-memory session; it does not revoke the server-side refresh token.
+- The frontend exposes the refresh API client method, but does not automatically refresh tokens or persist them in browser storage.

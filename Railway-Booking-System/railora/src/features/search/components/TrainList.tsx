@@ -7,6 +7,7 @@ import type { TrainSearchResponseDTO } from '../types';
 export interface TrainListProps {
   trains?: TrainSearchResponseDTO[];
   isLoading: boolean;
+  isFetching?: boolean;
   isError: boolean;
   error?: Error | null;
   onRetry: () => void;
@@ -15,11 +16,13 @@ export interface TrainListProps {
   toCode?: string;
   travelDate?: string;
   onSwapAndSearch?: () => void;
+  validationError?: string | null;
 }
 
 export function TrainList({
   trains,
   isLoading,
+  isFetching = false,
   isError,
   error,
   onRetry,
@@ -28,6 +31,7 @@ export function TrainList({
   toCode = '',
   travelDate,
   onSwapAndSearch,
+  validationError,
 }: TrainListProps) {
   // ── 1. Initial / Guidance State (Before search is triggered) ──
   if (!hasSearched) {
@@ -78,7 +82,28 @@ export function TrainList({
     );
   }
 
-  // ── 2. Loading State (Skeletons & ARIA Live) ──
+  // ── 2. Validation Error State (Invalid URL params or same-station selection) ──
+  if (validationError) {
+    return (
+      <div
+        role="alert"
+        aria-live="polite"
+        className="rounded-2xl border border-status-danger-border bg-status-danger-bg p-8 sm:p-10 text-center shadow-xs"
+      >
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-status-danger-text mb-4">
+          <AlertTriangle size={24} aria-hidden="true" />
+        </div>
+        <h3 className="text-lg font-bold text-status-danger-text">
+          Invalid Search Parameters
+        </h3>
+        <p className="mx-auto mt-2 max-w-lg text-sm text-ink-secondary leading-relaxed">
+          {validationError}
+        </p>
+      </div>
+    );
+  }
+
+  // ── 3. Loading State (Skeletons & ARIA Live) ──
   if (isLoading) {
     return (
       <section
@@ -102,7 +127,7 @@ export function TrainList({
     );
   }
 
-  // ── 3. Error State (Backend / Network Failure) ──
+  // ── 4. Error State (Backend / Network Failure) ──
   if (isError) {
     const errorMessage =
       (error as any)?.response?.data?.message ||
@@ -139,7 +164,7 @@ export function TrainList({
     );
   }
 
-  // ── 4. Empty State (Zero results found for station pair) ──
+  // ── 5. Empty State (Zero results found for station pair) ──
   if (!trains || trains.length === 0) {
     return (
       <div className="rounded-2xl border border-surface-border bg-surface-card p-8 sm:p-12 text-center shadow-xs">
@@ -175,7 +200,7 @@ export function TrainList({
     );
   }
 
-  // ── 5. Results List (Success State) ──
+  // ── 6. Results List (Success State) ──
   return (
     <section aria-label="Train search results" className="space-y-4">
       {/* Results Meta Banner */}
@@ -189,9 +214,17 @@ export function TrainList({
           <span className="font-mono text-navy-700 font-bold">{toCode}</span>
         </p>
 
-        <p className="text-xs text-ink-muted">
-          Showing official scheduled timetables
-        </p>
+        <div className="flex items-center gap-2">
+          {isFetching && (
+            <span className="inline-flex items-center gap-1 text-2xs text-teal-700 font-medium animate-pulse">
+              <RefreshCw size={11} className="animate-spin" />
+              Updating schedules…
+            </span>
+          )}
+          <p className="text-xs text-ink-muted">
+            Showing official scheduled timetables
+          </p>
+        </div>
       </div>
 
       {/* Train Cards Stack */}

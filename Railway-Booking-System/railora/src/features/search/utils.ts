@@ -114,3 +114,31 @@ export function validateStationCode(code: string): string | null {
   }
   return null;
 }
+
+/**
+ * Validates travel date string (YYYY-MM-DD).
+ * Rules:
+ * - If omitted/empty, returns null (date is optional context in timetable search)
+ * - Must strictly match YYYY-MM-DD calendar date
+ * - Must not be before today's local date
+ */
+export function validateTravelDate(dateStr: string): string | null {
+  if (!dateStr || !dateStr.trim()) {
+    return null;
+  }
+  const trimmed = dateStr.trim();
+  const regex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!regex.test(trimmed)) {
+    return 'Travel date must be in YYYY-MM-DD format';
+  }
+  const parsed = new Date(trimmed + 'T00:00:00');
+  if (isNaN(parsed.getTime())) {
+    return 'Invalid travel date';
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (parsed < today) {
+    return 'Travel date cannot be in the past';
+  }
+  return null;
+}

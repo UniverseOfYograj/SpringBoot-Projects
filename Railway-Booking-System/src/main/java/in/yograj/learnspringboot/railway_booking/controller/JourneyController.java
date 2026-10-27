@@ -32,8 +32,10 @@ public class JourneyController {
     }
 
     @GetMapping
-    public List<JourneyResponseDTO> getAllJourneys() {
-        return journeyService.getAllJourneys();
+    public List<JourneyResponseDTO> getAllJourneys(
+            @RequestParam(required = false) Long trainId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return journeyService.getAllJourneys(trainId, date);
     }
 
     @GetMapping("/search")

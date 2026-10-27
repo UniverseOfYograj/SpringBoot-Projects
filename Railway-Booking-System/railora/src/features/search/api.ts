@@ -9,10 +9,12 @@ import type { TrainSearchResponseDTO } from './types';
  * GET /api/trains/search?from={from}&to={to}
  *
  * Both station codes are normalized (trimmed and uppercased) prior to request.
+ * Supports optional AbortSignal for request cancellation during rapid searches.
  */
 export async function searchTrains(
   fromStationCode: string,
   toStationCode: string,
+  signal?: AbortSignal,
 ): Promise<TrainSearchResponseDTO[]> {
   const from = fromStationCode.trim().toUpperCase();
   const to = toStationCode.trim().toUpperCase();
@@ -21,6 +23,7 @@ export async function searchTrains(
     API_PATHS.TRAINS.SEARCH,
     {
       params: { from, to },
+      signal,
     },
   );
 

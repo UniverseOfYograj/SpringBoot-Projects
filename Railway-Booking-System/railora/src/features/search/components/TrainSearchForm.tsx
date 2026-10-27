@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeftRight, Search, Calendar, MapPin, Info } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { POPULAR_STATIONS, POPULAR_ROUTES, validateStationCode } from '../utils';
+import { POPULAR_STATIONS, POPULAR_ROUTES, validateStationCode, validateTravelDate } from '../utils';
 
 export interface TrainSearchFormProps {
   initialFrom?: string;
@@ -28,6 +28,7 @@ export function TrainSearchForm({
 
   const [fromError, setFromError] = useState<string | null>(null);
   const [toError, setToError] = useState<string | null>(null);
+  const [dateError, setDateError] = useState<string | null>(null);
   const [generalError, setGeneralError] = useState<string | null>(null);
 
   // Sync state if props change (e.g., URL parameters change)
@@ -61,6 +62,11 @@ export function TrainSearchForm({
     setFromError(null);
     setToError(null);
     setGeneralError(null);
+
+    const dErr = date ? validateTravelDate(date) : null;
+    setDateError(dErr);
+    if (dErr) return;
+
     onSearch({ from: routeFrom, to: routeTo, date });
   };
 
@@ -72,11 +78,13 @@ export function TrainSearchForm({
 
     const fErr = validateStationCode(normalizedFrom);
     const tErr = validateStationCode(normalizedTo);
+    const dErr = date ? validateTravelDate(date) : null;
 
     setFromError(fErr);
     setToError(tErr);
+    setDateError(dErr);
 
-    if (fErr || tErr) {
+    if (fErr || tErr || dErr) {
       setGeneralError(null);
       return;
     }
@@ -164,9 +172,13 @@ export function TrainSearchForm({
               type="date"
               min={todayStr}
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(e) => {
+                setDate(e.target.value);
+                if (dateError) setDateError(null);
+              }}
+              error={dateError || undefined}
               leftIcon={<Calendar size={16} />}
-              helperText="Scheduled timetable context"
+              helperText={dateError ? undefined : "Scheduled timetable context"}
             />
           </div>
         </div>

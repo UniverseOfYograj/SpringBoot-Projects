@@ -16,6 +16,7 @@ import in.yograj.learnspringboot.railway_booking.repository.SeatRepository;
 import in.yograj.learnspringboot.railway_booking.repository.StationRepository;
 import in.yograj.learnspringboot.railway_booking.repository.TrainRepository;
 import in.yograj.learnspringboot.railway_booking.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -34,7 +35,13 @@ public class RailwayBookingApplication {
     @ConditionalOnProperty(name = "railway.data-seed.admin.enabled", havingValue = "true", matchIfMissing = false)
     public CommandLineRunner seedAdminUser(
             UserRepository userRepository,
-            PasswordEncoder passwordEncoder) {
+            PasswordEncoder passwordEncoder,
+            @Value("${railway.data-seed.admin.password:${SEED_ADMIN_PASSWORD:}}") String configuredPassword) {
+        if (configuredPassword == null || configuredPassword.isBlank()) {
+            throw new IllegalStateException(
+                    "Admin user seeding is enabled ('railway.data-seed.admin.enabled=true' or 'SEED_ADMIN_USER_ENABLED=true'), "
+                            + "but SEED_ADMIN_PASSWORD is missing or blank. A non-blank password must be configured.");
+        }
         return args -> {
             String username = "admin";
             if (!userRepository.existsByUsername(username)) {
@@ -43,8 +50,7 @@ public class RailwayBookingApplication {
                 admin.setFullName("System Admin");
                 admin.setEmail("admin@railwaybooking.local");
                 admin.setPhoneNumber("0000000000");
-                String adminPassword = System.getenv().getOrDefault("SEED_ADMIN_PASSWORD", "Admin@123");
-                admin.setPassword(passwordEncoder.encode(adminPassword));
+                admin.setPassword(passwordEncoder.encode(configuredPassword.trim()));
                 admin.setStatus("ACTIVE");
                 admin.setRole("ROLE_ADMIN");
                 userRepository.save(admin);

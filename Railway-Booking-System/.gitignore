@@ -1,8 +1,19 @@
 HELP.md
 target/
+target_test-classes/
+tmpjar/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+
+### Root compiled classes & logs ###
+*.class
+*.log
+*.err
+
+### Local Database Files ###
+localdb/
+*.db
 
 ### STS ###
 .apt_generated
@@ -32,37 +43,19 @@ build/
 ### VS Code ###
 .vscode/
 
-# Generated files and extracted artifacts
-*.class
-*.log
-*.err
-/target/
-/target_test-classes/
-/tmpjar/
+### Local scratch scripts and artifacts ###
 /META-INF/
 /org/
+/GenerateExpiredRefresh.java
+/RevokeRefreshToken.java
+/SeedAdmin.java
+/TempHashForAdmin.java
+/tempAdminHash.java
+/admin_seed.sql
 
-# Local databases and environment secrets
-/localdb/
+
+# Environment variables and secrets
 .env
 .env.*
 !.env.example
 application-local.properties
-application-local.yml
-application-local.yaml
-
-# IDE settings
-.idea/
-.vscode/
-
-# Local admin seed and temporary utilities
-/admin_seed.sql
-/GenerateExpiredRefresh.java
-/RevokeRefreshToken.java
-/SeedAdmin.java
-/tempAdminHash.java
-/TempHashForAdmin.java
-
-# Local token/debug files
-/expired_refresh.txt
-/revoked_refresh.txt

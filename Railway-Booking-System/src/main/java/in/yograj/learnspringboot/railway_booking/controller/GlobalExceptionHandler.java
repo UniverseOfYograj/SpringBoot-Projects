@@ -2,6 +2,9 @@ package in.yograj.learnspringboot.railway_booking.controller;
 
 import in.yograj.learnspringboot.railway_booking.dto.ApiErrorResponse;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
+import in.yograj.learnspringboot.railway_booking.exception.InvalidAdmissionPassException;
+import in.yograj.learnspringboot.railway_booking.exception.QueueUnavailableException;
+import in.yograj.learnspringboot.railway_booking.exception.QueueRateLimitException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
 import in.yograj.learnspringboot.railway_booking.integration.railradar.exception.RailRadarSyncException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,6 +30,42 @@ public class GlobalExceptionHandler {
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
     private static final String DATA_INTEGRITY_CONFLICT_MESSAGE =
             "Database resource conflict: the request could not be completed due to conflicting data";
+
+    @ExceptionHandler(QueueUnavailableException.class)
+    public ResponseEntity<ApiErrorResponse> handleQueueUnavailable(
+            QueueUnavailableException ex, HttpServletRequest request) {
+        ApiErrorResponse body = ApiErrorResponse.of(
+                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+    }
+
+    @ExceptionHandler(QueueRateLimitException.class)
+    public ResponseEntity<ApiErrorResponse> handleQueueRateLimit(
+            QueueRateLimitException ex, HttpServletRequest request) {
+        ApiErrorResponse body = ApiErrorResponse.of(
+                HttpStatus.TOO_MANY_REQUESTS.value(),
+                HttpStatus.TOO_MANY_REQUESTS.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", "60").body(body);
+    }
+
+    @ExceptionHandler(InvalidAdmissionPassException.class)
+    public ResponseEntity<ApiErrorResponse> handleInvalidAdmissionPass(
+            InvalidAdmissionPassException ex, HttpServletRequest request) {
+        ApiErrorResponse body = ApiErrorResponse.of(
+                HttpStatus.FORBIDDEN.value(),
+                HttpStatus.FORBIDDEN.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(body);
+    }
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiErrorResponse> handleResourceNotFound(
@@ -80,10 +119,15 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleDataIntegrityViolation(
             DataIntegrityViolationException ex, HttpServletRequest request) {
         logger.warn("Data integrity violation at path [{}]: {}", request.getRequestURI(), ex.getMessage());
+        String conflictMessage = DATA_INTEGRITY_CONFLICT_MESSAGE;
+        String exMsg = ex.getMessage();
+        if (exMsg != null && (exMsg.contains("seat_alloc_no_overlap_excl") || exMsg.contains("23P01"))) {
+            conflictMessage = "The selected seat is already reserved for an overlapping journey segment. Please select another seat.";
+        }
         ApiErrorResponse body = ApiErrorResponse.of(
                 HttpStatus.CONFLICT.value(),
                 HttpStatus.CONFLICT.getReasonPhrase(),
-                DATA_INTEGRITY_CONFLICT_MESSAGE,
+                conflictMessage,
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);

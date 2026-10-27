@@ -1,6 +1,7 @@
 package in.yograj.learnspringboot.railway_booking.service;
 
 import in.yograj.learnspringboot.railway_booking.dto.SeatAvailabilityResponseDTO;
+import in.yograj.learnspringboot.railway_booking.dto.BookingMode;
 import in.yograj.learnspringboot.railway_booking.entity.*;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
@@ -68,6 +69,14 @@ public class SeatInventoryService {
     @Transactional
     public SeatAvailabilityResponseDTO holdSeat(Long journeyId, Long seatId, Integer holdMinutes,
                                                  Long boardingStopId, Long alightingStopId, String username) {
+        return holdSeat(journeyId, seatId, holdMinutes, boardingStopId, alightingStopId, username,
+                BookingMode.GENERAL, null);
+    }
+
+    @Transactional
+    public SeatAvailabilityResponseDTO holdSeat(Long journeyId, Long seatId, Integer holdMinutes,
+                                                 Long boardingStopId, Long alightingStopId, String username,
+                                                 BookingMode bookingMode, String admissionEntryId) {
         if (holdMinutes == null || holdMinutes < 1) {
             throw new BadRequestException("Hold duration in minutes is required and must be >= 1");
         }
@@ -92,12 +101,17 @@ public class SeatInventoryService {
         LocalDateTime now = LocalDateTime.now();
         List<SeatAllocation> allocations = allocationRepository
                 .findByInventory_InventoryId(inventory.getInventoryId());
+        List<SeatAllocation> expiredAllocations = new ArrayList<>();
         for (SeatAllocation allocation : allocations) {
             if (HOLD.equalsIgnoreCase(allocation.getStatus())
                     && (allocation.getHoldExpiresAt() == null || !allocation.getHoldExpiresAt().isAfter(now))) {
                 allocation.setStatus(EXPIRED);
                 allocation.setUpdatedAt(now);
+                expiredAllocations.add(allocation);
             }
+        }
+        if (!expiredAllocations.isEmpty()) {
+            allocationRepository.saveAllAndFlush(expiredAllocations);
         }
         if (allocations.stream().anyMatch(allocation -> isBlocking(allocation, segment, now))) {
             throw new BadRequestException("Selected seat is held or booked for an overlapping segment");
@@ -107,7 +121,11 @@ public class SeatInventoryService {
         allocation.setInventory(inventory);
         allocation.setBoardingStop(segment.boardingStop());
         allocation.setAlightingStop(segment.alightingStop());
+        allocation.setFromStopSeq(segment.boardingStop().getStopSequence());
+        allocation.setToStopSeq(segment.alightingStop().getStopSequence());
         allocation.setHoldOwner(holdOwner);
+        allocation.setBookingMode(bookingMode);
+        allocation.setAdmissionEntryId(admissionEntryId);
         allocation.setStatus(HOLD);
         allocation.setHoldExpiresAt(now.plusMinutes(holdMinutes));
         allocation.setCreatedAt(now);
@@ -164,6 +182,8 @@ public class SeatInventoryService {
         legacyAllocation.setInventory(inventory);
         legacyAllocation.setBoardingStop(fullRun.boardingStop());
         legacyAllocation.setAlightingStop(fullRun.alightingStop());
+        legacyAllocation.setFromStopSeq(fullRun.boardingStop().getStopSequence());
+        legacyAllocation.setToStopSeq(fullRun.alightingStop().getStopSequence());
         legacyAllocation.setHoldOwner(inventory.getHoldOwner());
         legacyAllocation.setStatus(HOLD);
         legacyAllocation.setHoldExpiresAt(inventory.getHoldExpiresAt());

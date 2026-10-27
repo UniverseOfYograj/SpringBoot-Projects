@@ -7,12 +7,13 @@
 
 // ── Client-side route paths ─────────────────────────────────────────
 export const ROUTES = {
-  HOME:     '/',
-  SEARCH:   '/search',
-  BOOKINGS: '/bookings',
-  LOGIN:    '/login',
-  REGISTER: '/register',
-  PROFILE:  '/profile',
+  HOME:         '/',
+  SEARCH:       '/search',
+  BOOKINGS:     '/bookings',
+  WAITING_ROOM: '/waiting-room',
+  LOGIN:        '/login',
+  REGISTER:     '/register',
+  PROFILE:      '/profile',
 } as const;
 
 // ── API path prefixes (relative — proxied by Vite in dev) ──────────
@@ -44,6 +45,16 @@ export const API_PATHS = {
     CREATE:  '/bookings',
     BY_REF:  (ref: string) => `/bookings/${ref}`,
     PAY:     (ref: string) => `/bookings/${ref}/pay`,
+  },
+  WAITING_ROOM: {
+    JOIN:   '/vwr/queue/join',
+    STATUS: '/vwr/queue/status',
+    LEAVE:  '/vwr/queue/leave',
+  },
+  TATKAL: {
+    QUEUE:  (journeyId: number) => `/tatkal/journeys/${journeyId}/queue`,
+    STATUS: (journeyId: number) => `/tatkal/journeys/${journeyId}/queue/me`,
+    LEAVE:  (journeyId: number) => `/tatkal/journeys/${journeyId}/queue/me`,
   },
 } as const;
 

@@ -77,6 +77,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/refresh").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/users/register").permitAll()
 
+                        .requestMatchers("/api/tatkal/**").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/journeys", "/api/journeys/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/journeys").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/journeys/*/seats/hold").authenticated()

@@ -20,4 +20,6 @@ public interface JourneyService {
     List<JourneyResponseDTO> searchJourneys(Long fromStationId, Long toStationId, LocalDate journeyDate);
 
     List<JourneyResponseDTO> getAllJourneys();
+
+    List<JourneyResponseDTO> getAllJourneys(Long trainId, LocalDate date);
 }

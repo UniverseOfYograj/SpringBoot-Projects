@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import AppShell from '@/components/layout/AppShell';
 import AppRouter from '@/app/router';
+import { AuthProvider } from '@/features/auth/AuthContext';
 
 /**
  * Global QueryClient — configured for enterprise-grade reliability:
@@ -27,9 +28,11 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AppShell>
-          <AppRouter />
-        </AppShell>
+        <AuthProvider>
+          <AppShell>
+            <AppRouter />
+          </AppShell>
+        </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   );

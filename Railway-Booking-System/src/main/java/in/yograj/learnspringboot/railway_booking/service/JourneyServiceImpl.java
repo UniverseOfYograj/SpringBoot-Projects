@@ -198,7 +198,20 @@ public class JourneyServiceImpl implements JourneyService {
     @Override
     @Transactional(readOnly = true)
     public List<JourneyResponseDTO> getAllJourneys() {
-        return journeyRepository.findAll().stream()
+        return getAllJourneys(null, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<JourneyResponseDTO> getAllJourneys(Long trainId, LocalDate date) {
+        List<Journey> journeys;
+        if (date != null) {
+            journeys = journeyRepository.findByJourneyDate(date);
+        } else {
+            journeys = journeyRepository.findAll();
+        }
+        return journeys.stream()
+                .filter(j -> trainId == null || (j.getTrain() != null && j.getTrain().getTrainId().equals(trainId)))
                 .map(journey -> mapToResponse(journey, null, null))
                 .toList();
     }

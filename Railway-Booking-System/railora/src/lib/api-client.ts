@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAccessToken } from '@/features/auth/session';
 
 /**
  * Centralized Axios API client.
@@ -7,8 +8,7 @@ import axios from 'axios';
  * In development, Vite proxies them to http://localhost:8080.
  * In production, the web server must handle the same rewrite.
  *
- * Auth token injection, 401 handling, and refresh-token rotation
- * will be added in Stage 4 via request/response interceptors.
+ * Access tokens are attached from the in-memory authentication session.
  */
 const apiClient = axios.create({
   baseURL: '/api',
@@ -19,21 +19,23 @@ const apiClient = axios.create({
   timeout: 15_000,
 });
 
-// ── Request interceptor (token injection — Stage 4) ──────────────
+// Attach the active in-memory access token to authenticated requests.
 apiClient.interceptors.request.use(
   (config) => {
     // TODO (Stage 4): Attach `Authorization: Bearer <token>` from AuthContext.
+    const accessToken = getAccessToken();
+    if (accessToken) {
+      config.headers.Authorization = `Bearer ${accessToken}`;
+    }
     return config;
   },
   (error) => Promise.reject(error),
 );
 
-// ── Response interceptor (error normalization, 401 refresh — Stage 4) ─
+// Refresh remains an explicit operation; expired sessions are not silently refreshed.
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    // TODO (Stage 4): Intercept 401 to attempt silent token refresh.
-    // TODO: Normalize error shape to match ApiErrorResponse from backend.
     return Promise.reject(error);
   },
 );
