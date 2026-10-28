@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,6 +41,7 @@ public class BookingService {
     private static final String CANCELLED = "CANCELLED";
     private static final String STATUS_SUCCESS = "SUCCESS";
     private static final String STATUS_FAILED = "FAILED";
+    private static final String STATUS_REFUNDED = "REFUNDED";
 
     public static final BigDecimal DEFAULT_MOCK_FARE = new BigDecimal("500.00");
 
@@ -366,9 +368,51 @@ public class BookingService {
             throw new IllegalStateException("Booking cannot be cancelled in status: " + booking.getBookingStatus());
         }
 
+        // 4. Verify payment refund preconditions if booking was paid
+        PaymentTransaction originalPaymentTxn = null;
+        BigDecimal verifiedRefundAmount = null;
+        if (STATUS_SUCCESS.equalsIgnoreCase(booking.getPaymentStatus())) {
+            List<PaymentTransaction> txns = paymentTransactionRepository.findByBookingRef(booking.getBookingRef());
+            List<PaymentTransaction> successfulTxns = txns.stream()
+                    .filter(t -> STATUS_SUCCESS.equalsIgnoreCase(t.getStatus()))
+                    .toList();
+
+            if (successfulTxns.isEmpty()) {
+                throw new IllegalStateException(
+                        "Cannot process refund: original successful payment transaction not found for booking " + booking.getBookingRef()
+                );
+            }
+            if (successfulTxns.size() > 1) {
+                throw new IllegalStateException(
+                        "Cannot process refund: multiple successful payment transactions found for booking " + booking.getBookingRef()
+                );
+            }
+
+            originalPaymentTxn = successfulTxns.get(0);
+            BigDecimal paidAmount = originalPaymentTxn.getAmount();
+            if (paidAmount == null || paidAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalStateException(
+                        "Cannot process refund: original payment transaction has non-positive or null amount for booking " + booking.getBookingRef()
+                );
+            }
+
+            if (booking.getAmount() != null && booking.getAmount().compareTo(paidAmount) != 0) {
+                throw new IllegalStateException(
+                        "Cannot process refund: booking amount (" + booking.getAmount()
+                                + ") does not match original payment transaction amount (" + paidAmount
+                                + ") for booking " + booking.getBookingRef()
+                );
+            }
+
+            verifiedRefundAmount = paidAmount;
+            if (booking.getAmount() == null) {
+                booking.setAmount(verifiedRefundAmount);
+            }
+        }
+
         LocalDateTime now = LocalDateTime.now();
 
-        // 4. Lock parent inventory and normalize legacy hold or blocked state if present
+        // 5. Lock parent inventory and normalize legacy hold or blocked state if present
         if (booking.getJourney() != null && booking.getSeat() != null) {
             inventoryRepository.findByJourneyAndSeatForUpdate(
                     booking.getJourney().getJourneyId(), booking.getSeat().getSeatId())
@@ -387,7 +431,7 @@ public class BookingService {
                     });
         }
 
-        // 5. Release seat allocation: set status to CANCELLED so GiST constraint and isBlocking treat seat as available
+        // 6. Release seat allocation: set status to CANCELLED so GiST constraint and isBlocking treat seat as available
         SeatAllocation allocation = booking.getSeatAllocation();
         if (allocation != null) {
             allocation.setStatus(CANCELLED);
@@ -395,12 +439,39 @@ public class BookingService {
             allocationRepository.save(allocation);
         }
 
-        // 6. Update booking status
+        // 7. Update booking status and process mock refund ledger record if eligible
         booking.setBookingStatus(CANCELLED);
         if ("PENDING".equalsIgnoreCase(booking.getPaymentStatus())) {
             booking.setPaymentStatus(CANCELLED);
+        } else if (STATUS_SUCCESS.equalsIgnoreCase(booking.getPaymentStatus())) {
+            // Full mock refund: in absence of a documented fee policy, the verified paid amount is refunded in the mock ledger.
+            booking.setPaymentStatus(STATUS_REFUNDED);
+
+            // Record the mock refund transaction idempotently
+            String refundIdempotencyKey = "REFUND-" + booking.getBookingRef();
+            Optional<PaymentTransaction> existingRefund = paymentTransactionRepository
+                    .findByBookingRefAndIdempotencyKey(booking.getBookingRef(), refundIdempotencyKey);
+
+            if (existingRefund.isEmpty()) {
+                String paymentMethod = originalPaymentTxn.getPaymentMethod() != null
+                        && !originalPaymentTxn.getPaymentMethod().isBlank()
+                        ? originalPaymentTxn.getPaymentMethod()
+                        : "MOCK_UPI";
+
+                PaymentTransaction refundTxn = new PaymentTransaction();
+                refundTxn.setBooking(booking);
+                refundTxn.setBookingRef(booking.getBookingRef());
+                refundTxn.setTransactionRef("TXN-REFUND-" + UUID.randomUUID().toString().replace("-", "").toUpperCase());
+                refundTxn.setPaymentMethod(paymentMethod);
+                refundTxn.setAmount(verifiedRefundAmount);
+                refundTxn.setStatus(STATUS_REFUNDED);
+                refundTxn.setFailureReason(null);
+                refundTxn.setIdempotencyKey(refundIdempotencyKey);
+                refundTxn.setSimulateFailure(false);
+                refundTxn.setCreatedAt(now);
+                paymentTransactionRepository.save(refundTxn);
+            }
         }
-        // Note: If payment was SUCCESS, paymentStatus remains SUCCESS because refunds are not automated/supported in the current mock payment system.
         bookingRepository.save(booking);
 
         return toDetailResponse(booking);

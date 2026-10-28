@@ -17,6 +17,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 
 import javax.sql.DataSource;
 import java.math.BigDecimal;
@@ -63,7 +67,7 @@ class BookingCancellationLifecycleTests {
     @Autowired private JourneyStopRepository journeyStopRepository;
     @Autowired private SeatAllocationRepository allocationRepository;
     @Autowired private BookingRepository bookingRepository;
-    @Autowired private PaymentTransactionRepository paymentTransactionRepository;
+    @MockitoSpyBean private PaymentTransactionRepository paymentTransactionRepository;
     @Autowired private TrainRouteService trainRouteService;
     @Autowired private JourneyService journeyService;
     @Autowired private SeatInventoryService seatInventoryService;
@@ -176,15 +180,28 @@ class BookingCancellationLifecycleTests {
         // 3. User 1 cancels the booking
         BookingDetailResponseDTO cancelled = bookingService.cancelBooking(created.bookingRef(), user1.getUsername());
         assertEquals("CANCELLED", cancelled.bookingStatus());
-        // Note on refund behavior: payment was processed as SUCCESS and Railora has no automated refund mechanism.
-        assertEquals("SUCCESS", cancelled.paymentStatus());
+        assertEquals("REFUNDED", cancelled.paymentStatus());
 
-        // 4. Verify DB state
+        // 4. Verify DB state & refund ledger
         Booking dbBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
         assertEquals("CANCELLED", dbBooking.getBookingStatus());
+        assertEquals("REFUNDED", dbBooking.getPaymentStatus());
         SeatAllocation allocation = dbBooking.getSeatAllocation();
         assertNotNull(allocation);
         assertEquals("CANCELLED", allocation.getStatus());
+
+        List<PaymentTransaction> txns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+        assertEquals(2, txns.size(), "Must contain original payment and mock refund transaction");
+        PaymentTransaction refundTxn = txns.stream()
+                .filter(t -> "REFUNDED".equalsIgnoreCase(t.getStatus()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Refund transaction must exist"));
+        assertEquals(paymentRes.amount(), refundTxn.getAmount());
+        assertTrue(refundTxn.getTransactionRef().startsWith("TXN-REFUND-"));
+        assertEquals("REFUND-" + created.bookingRef(), refundTxn.getIdempotencyKey());
+        assertEquals("MOCK_UPI", refundTxn.getPaymentMethod());
+        assertFalse(Boolean.TRUE.equals(refundTxn.getSimulateFailure()));
+        assertNotNull(refundTxn.getCreatedAt());
 
         // 5. User 2 can now successfully hold and book the released seat!
         var user2Hold = seatInventoryService.holdSeat(journeyId, seatInv.getSeat().getSeatId(), 10,
@@ -277,6 +294,11 @@ class BookingCancellationLifecycleTests {
                 bookingService.cancelBooking(created.bookingRef(), user.getUsername())
         );
         assertEquals("Booking has already been cancelled", ex.getMessage());
+
+        // Verify exactly one refund ledger record was created despite repeated cancellation attempt
+        List<PaymentTransaction> txns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+        long refundCount = txns.stream().filter(t -> "REFUNDED".equalsIgnoreCase(t.getStatus())).count();
+        assertEquals(1, refundCount, "Repeated cancel attempt must not create duplicate refund ledger entries");
     }
 
     @Test
@@ -340,5 +362,159 @@ class BookingCancellationLifecycleTests {
         Booking finalBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
         assertEquals("CANCELLED", finalBooking.getBookingStatus());
         assertEquals("CANCELLED", finalBooking.getSeatAllocation().getStatus());
+    }
+
+    @Test
+    void cancelBooking_missingOriginalPaymentTransaction_failsAndRollsBack() {
+        User user = createUser("unverif-missing", "ROLE_USER");
+        JourneySeatInventory seatInv = inventories.get(0);
+
+        BookingResponseDTO created = createPendingBooking(seatInv, user);
+        bookingService.processPayment(created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "idemp-unverif-1", false), user.getUsername());
+
+        // Delete the original payment transaction to simulate missing ledger record
+        List<PaymentTransaction> txns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+        assertEquals(1, txns.size());
+        paymentTransactionRepository.deleteAll(txns);
+
+        // Attempt cancellation: must fail safely because paid amount cannot be established
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                bookingService.cancelBooking(created.bookingRef(), user.getUsername())
+        );
+        assertTrue(ex.getMessage().contains("original successful payment transaction not found"));
+
+        // Verify transaction rollback: booking remains CONFIRMED, paymentStatus remains SUCCESS, seat remains BOOKED
+        Booking dbBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        assertEquals("CONFIRMED", dbBooking.getBookingStatus());
+        assertEquals("SUCCESS", dbBooking.getPaymentStatus());
+        assertEquals("BOOKED", dbBooking.getSeatAllocation().getStatus());
+
+        List<PaymentTransaction> postTxns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+        assertTrue(postTxns.isEmpty(), "No refund transaction should have been recorded");
+    }
+
+    @Test
+    void cancelBooking_mismatchedPaymentAmount_failsAndRollsBack() {
+        User user = createUser("unverif-mismatch", "ROLE_USER");
+        JourneySeatInventory seatInv = inventories.get(0);
+
+        BookingResponseDTO created = createPendingBooking(seatInv, user);
+        bookingService.processPayment(created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "idemp-unverif-2", false), user.getUsername());
+
+        // Tamper with booking amount so it contradicts the payment transaction
+        Booking dbBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        dbBooking.setAmount(new BigDecimal("999.00"));
+        bookingRepository.save(dbBooking);
+
+        // Attempt cancellation: must fail safely because booking amount contradicts payment transaction
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                bookingService.cancelBooking(created.bookingRef(), user.getUsername())
+        );
+        assertTrue(ex.getMessage().contains("does not match original payment transaction amount"));
+
+        // Verify transaction rollback: booking remains CONFIRMED, allocation remains BOOKED, no refund txn created
+        Booking rolledBackBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        assertEquals("CONFIRMED", rolledBackBooking.getBookingStatus());
+        assertEquals("SUCCESS", rolledBackBooking.getPaymentStatus());
+        assertEquals("BOOKED", rolledBackBooking.getSeatAllocation().getStatus());
+
+        List<PaymentTransaction> postTxns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+        assertEquals(1, postTxns.size(), "Only original payment transaction must exist");
+        assertEquals("SUCCESS", postTxns.get(0).getStatus());
+    }
+
+    @Test
+    void cancelBooking_nullBookingAmount_prefersOriginalTransactionAmount() {
+        User user = createUser("null-amt-user", "ROLE_USER");
+        JourneySeatInventory seatInv = inventories.get(0);
+
+        BookingResponseDTO created = createPendingBooking(seatInv, user);
+        bookingService.processPayment(created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "idemp-null-amt", false), user.getUsername());
+
+        // Update payment transaction amount to a non-default value, and set booking.amount to null
+        PaymentTransaction txn = paymentTransactionRepository.findByBookingRef(created.bookingRef()).get(0);
+        BigDecimal customAmount = new BigDecimal("750.00");
+        txn.setAmount(customAmount);
+        paymentTransactionRepository.save(txn);
+
+        Booking dbBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        dbBooking.setAmount(null);
+        bookingRepository.save(dbBooking);
+
+        // Cancellation should succeed by preferring the original transaction amount instead of default mock fare
+        BookingDetailResponseDTO cancelled = bookingService.cancelBooking(created.bookingRef(), user.getUsername());
+        assertEquals("CANCELLED", cancelled.bookingStatus());
+        assertEquals("REFUNDED", cancelled.paymentStatus());
+        assertEquals(customAmount, cancelled.amount());
+
+        // Verify refund transaction in DB has exact customAmount
+        List<PaymentTransaction> postTxns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+        PaymentTransaction refundTxn = postTxns.stream()
+                .filter(t -> "REFUNDED".equalsIgnoreCase(t.getStatus()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(customAmount, refundTxn.getAmount());
+    }
+
+    @Test
+    void cancelBooking_failureDuringRefundLedgerSave_rollsBackSeatReleaseAndBookingStatus() {
+        User user = createUser("rollback-user", "ROLE_USER");
+        JourneySeatInventory seatInv = inventories.get(0);
+
+        BookingResponseDTO created = createPendingBooking(seatInv, user);
+        bookingService.processPayment(created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", "idemp-rb-save", false), user.getUsername());
+
+        // Verify pre-cancellation confirmed state
+        Booking initialBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        assertEquals("CONFIRMED", initialBooking.getBookingStatus());
+        assertEquals("SUCCESS", initialBooking.getPaymentStatus());
+        assertEquals("BOOKED", initialBooking.getSeatAllocation().getStatus());
+        Long allocationId = initialBooking.getSeatAllocation().getSeatAllocationId();
+
+        // Capture snapshot of mutable inventory fields affected by cancelBooking
+        JourneySeatInventory preInv = inventoryRepository.findById(seatInv.getInventoryId()).orElseThrow();
+        String expectedInvStatus = preInv.getStatus();
+        LocalDateTime expectedHoldExpiresAt = preInv.getHoldExpiresAt();
+        Long expectedHoldOwnerId = preInv.getHoldOwner() != null ? preInv.getHoldOwner().getUserId() : null;
+        LocalDateTime expectedUpdatedAt = preInv.getUpdatedAt();
+
+        // Inject simulated failure during refund ledger persistence (Step 7), which occurs AFTER
+        // seat allocation has already been updated to CANCELLED in Step 6
+        doThrow(new RuntimeException("Simulated ledger failure on refund persistence"))
+                .when(paymentTransactionRepository)
+                .save(argThat(txn -> txn != null && "REFUNDED".equalsIgnoreCase(txn.getStatus())));
+
+        try {
+            // Execution must fail at the late refund ledger save step
+            RuntimeException ex = assertThrows(RuntimeException.class, () ->
+                    bookingService.cancelBooking(created.bookingRef(), user.getUsername())
+            );
+            assertTrue(ex.getMessage().contains("Simulated ledger failure on refund persistence"));
+
+            // Fresh database reads to verify transaction rollback of dirty state:
+            // 1. Booking status and payment status must roll back to CONFIRMED / SUCCESS
+            Booking dbBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+            assertEquals("CONFIRMED", dbBooking.getBookingStatus(), "Booking status must be rolled back to CONFIRMED");
+            assertEquals("SUCCESS", dbBooking.getPaymentStatus(), "Payment status must be rolled back to SUCCESS");
+
+            // 2. Seat allocation must roll back to BOOKED despite in-flight mutation to CANCELLED in Step 6
+            SeatAllocation dbAllocation = allocationRepository.findById(allocationId).orElseThrow();
+            assertEquals("BOOKED", dbAllocation.getStatus(), "Seat allocation status must be rolled back to BOOKED");
+
+            // 3. Parent inventory mutable fields affected by cancelBooking must roll back to original snapshot
+            JourneySeatInventory dbInv = inventoryRepository.findById(seatInv.getInventoryId()).orElseThrow();
+            assertEquals(expectedInvStatus, dbInv.getStatus(), "Inventory status must match pre-cancellation snapshot");
+            assertEquals(expectedHoldExpiresAt, dbInv.getHoldExpiresAt(), "Inventory holdExpiresAt must match pre-cancellation snapshot");
+            Long actualHoldOwnerId = dbInv.getHoldOwner() != null ? dbInv.getHoldOwner().getUserId() : null;
+            assertEquals(expectedHoldOwnerId, actualHoldOwnerId, "Inventory holdOwner must match pre-cancellation snapshot");
+            assertEquals(expectedUpdatedAt, dbInv.getUpdatedAt(), "Inventory updatedAt must match pre-cancellation snapshot");
+
+            // 4. No refund transaction must remain in the payment transaction ledger
+            List<PaymentTransaction> postTxns = paymentTransactionRepository.findByBookingRef(created.bookingRef());
+            assertEquals(1, postTxns.size(), "Only original successful payment transaction must exist");
+            assertEquals("SUCCESS", postTxns.get(0).getStatus());
+        } finally {
+            reset(paymentTransactionRepository);
+        }
     }
 }

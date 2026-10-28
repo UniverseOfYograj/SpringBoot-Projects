@@ -213,7 +213,7 @@ class BookingPaymentControllerTests {
                 "NDLS", "NEW DELHI", "BCT", "Mumbai Central",
                 LocalDate.of(2026, 10, 27), LocalTime.of(16, 30), LocalTime.of(8, 35),
                 1L, "B1", "SECOND_SEATING", 1L, 1, "SECOND_SEATING", 1L,
-                "CANCELLED", "SUCCESS", new BigDecimal("500.00"), LocalDateTime.now()
+                "CANCELLED", "REFUNDED", new BigDecimal("500.00"), LocalDateTime.now()
         );
 
         when(bookingService.cancelBooking(eq("RB-CANCEL-1"), eq("regular-user")))
@@ -223,7 +223,7 @@ class BookingPaymentControllerTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingRef").value("RB-CANCEL-1"))
                 .andExpect(jsonPath("$.bookingStatus").value("CANCELLED"))
-                .andExpect(jsonPath("$.paymentStatus").value("SUCCESS"));
+                .andExpect(jsonPath("$.paymentStatus").value("REFUNDED"));
     }
 
     @Test
