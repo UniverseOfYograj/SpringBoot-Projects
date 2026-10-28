@@ -11,11 +11,16 @@ import in.yograj.learnspringboot.railway_booking.entity.*;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
 import in.yograj.learnspringboot.railway_booking.exception.SeatHoldExpiredException;
+import in.yograj.learnspringboot.railway_booking.outbox.OutboxEventService;
+import in.yograj.learnspringboot.railway_booking.outbox.event.BookingCancelledEvent;
+import in.yograj.learnspringboot.railway_booking.outbox.event.BookingConfirmedEvent;
+import in.yograj.learnspringboot.railway_booking.outbox.event.PaymentFailedEvent;
 import in.yograj.learnspringboot.railway_booking.repository.BookingRepository;
 import in.yograj.learnspringboot.railway_booking.repository.JourneySeatInventoryRepository;
 import in.yograj.learnspringboot.railway_booking.repository.PaymentTransactionRepository;
 import in.yograj.learnspringboot.railway_booking.repository.SeatAllocationRepository;
 import in.yograj.learnspringboot.railway_booking.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -28,6 +33,7 @@ import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -55,6 +61,7 @@ public class BookingService {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final TatkalJourneyPolicy tatkalJourneyPolicy;
     private final TatkalAdmissionPassService tatkalAdmissionPassService;
+    private final OutboxEventService outboxEventService;
 
     public BookingService(BookingRepository bookingRepository,
                           JourneySeatInventoryRepository inventoryRepository,
@@ -64,6 +71,21 @@ public class BookingService {
                           PaymentTransactionRepository paymentTransactionRepository,
                           TatkalJourneyPolicy tatkalJourneyPolicy,
                           TatkalAdmissionPassService tatkalAdmissionPassService) {
+        this(bookingRepository, inventoryRepository, allocationRepository,
+                seatInventoryService, userRepository, paymentTransactionRepository,
+                tatkalJourneyPolicy, tatkalAdmissionPassService, null);
+    }
+
+    @Autowired
+    public BookingService(BookingRepository bookingRepository,
+                          JourneySeatInventoryRepository inventoryRepository,
+                          SeatAllocationRepository allocationRepository,
+                          SeatInventoryService seatInventoryService,
+                          UserRepository userRepository,
+                          PaymentTransactionRepository paymentTransactionRepository,
+                          TatkalJourneyPolicy tatkalJourneyPolicy,
+                          TatkalAdmissionPassService tatkalAdmissionPassService,
+                          OutboxEventService outboxEventService) {
         this.bookingRepository = bookingRepository;
         this.inventoryRepository = inventoryRepository;
         this.allocationRepository = allocationRepository;
@@ -72,6 +94,7 @@ public class BookingService {
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.tatkalJourneyPolicy = tatkalJourneyPolicy;
         this.tatkalAdmissionPassService = tatkalAdmissionPassService;
+        this.outboxEventService = outboxEventService;
     }
 
     @Transactional
@@ -293,6 +316,22 @@ public class BookingService {
             booking.setPaymentStatus(STATUS_FAILED);
             bookingRepository.save(booking);
 
+            if (outboxEventService != null) {
+                outboxEventService.stageEvent(
+                        "PAYMENT",
+                        failedTxn.getTransactionRef(),
+                        "PAYMENT_FAILED",
+                        new PaymentFailedEvent(
+                                booking.getBookingRef(),
+                                failedTxn.getTransactionRef(),
+                                amountToCharge,
+                                safeRequest.paymentMethod(),
+                                failedTxn.getFailureReason(),
+                                now
+                        )
+                );
+            }
+
             return new PaymentResponseDTO(
                     txnRef,
                     booking.getBookingRef(),
@@ -328,6 +367,27 @@ public class BookingService {
         allocation.setStatus(BOOKED);
         allocation.setUpdatedAt(now);
         allocationRepository.save(allocation);
+
+        if (outboxEventService != null) {
+            outboxEventService.stageEvent(
+                    "BOOKING",
+                    booking.getBookingRef(),
+                    "BOOKING_CONFIRMED",
+                    new BookingConfirmedEvent(
+                            booking.getBookingRef(),
+                            booking.getPnr() != null ? booking.getPnr() : "",
+                            booking.getBookingId(),
+                            booking.getUser().getUserId(),
+                            booking.getUser().getUsername(),
+                            booking.getJourney().getJourneyId(),
+                            amountToCharge,
+                            safeRequest.paymentMethod(),
+                            successTxn.getTransactionRef(),
+                            CONFIRMED,
+                            now
+                    )
+            );
+        }
 
         return new PaymentResponseDTO(
                 txnRef,
@@ -476,6 +536,25 @@ public class BookingService {
             }
         }
         bookingRepository.save(booking);
+
+        if (outboxEventService != null) {
+            outboxEventService.stageEvent(
+                    "BOOKING",
+                    booking.getBookingRef(),
+                    "BOOKING_CANCELLED",
+                    new BookingCancelledEvent(
+                            booking.getBookingRef(),
+                            booking.getPnr() != null ? booking.getPnr() : "",
+                            booking.getBookingId(),
+                            booking.getUser().getUserId(),
+                            booking.getUser().getUsername(),
+                            CANCELLED,
+                            booking.getPaymentStatus(),
+                            verifiedRefundAmount != null ? verifiedRefundAmount : BigDecimal.ZERO,
+                            now
+                    )
+            );
+        }
 
         return toDetailResponse(booking);
     }
