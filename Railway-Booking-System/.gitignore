@@ -59,3 +59,13 @@ build/
 .env.*
 !.env.example
 application-local.properties
+
+### Performance Testing & Backups ###
+backups/
+performance/results/*html-report/
+performance/results/html-report/
+performance/results/validation-html-report/
+performance/results/*.log
+jmeter.log
+performance/results/phase-b-10-users.jtl
+performance/results/phase-b-10-users-corrected.jtl
