@@ -232,6 +232,20 @@ An identical repeat sync reuses the existing route and stops. If an existing sav
 
 Reference contracts: [RailRadar station search](https://railradar.in/docs/search-stations) and [RailRadar train details/timetable](https://railradar.in/docs/get-train-details).
 
+## 7.4 Performance baseline (Apache JMeter)
+
+To validate API latency, throughput, and assertion stability under concurrent query load, the repository includes reproducible, read-only Apache JMeter performance baselines for train search, journey lookup, and seat availability endpoints:
+
+| Benchmark Phase | Concurrency | Duration | Total Requests | Error Rate | Throughput | Average Latency | 95th Percentile (p95) | Test Plan | Raw JTL Evidence |
+|---|---|---|---|---|---|---|---|---|---|
+| **Phase A** | 5 Virtual Users | 60 s | 896 | **0.00%** (0 errors) | ~15.07 req/s | 9.48 ms | 17.0 ms | [`phase-a-read-baseline.jmx`](./performance/phase-a-read-baseline.jmx) | [`phase-a-baseline.jtl`](./performance/results/phase-a-baseline.jtl) |
+| **Phase B** | 10 Virtual Users | 60 s | 1,785 | **0.00%** (0 errors) | ~29.96 req/s | 7.53 ms | 10.0 ms | [`HTTP Request Defaults.jmx`](./performance/HTTP%20Request%20Defaults.jmx) | [`phase-b-validation-10-users.jtl`](./performance/results/phase-b-validation-10-users.jtl) |
+
+> [!NOTE]
+> **Scope Disclaimer:** These measurements represent controlled, read-only query baselines running against local demonstration data to verify endpoint response times and assertion integrity. They are not a production-capacity benchmark or high-concurrency booking guarantee (write-locking, payment gateway, and Tatkal burst scenarios require distributed load infrastructure).
+>
+> For full methodology, per-endpoint percentiles, pacing profiles, and command-line execution steps, see the [Performance Documentation](./performance/README.md) in the [`performance/`](./performance/) directory.
+
 ## 8. Production hardening roadmap
 
 1. Add Redis cache for fare and availability lookup
