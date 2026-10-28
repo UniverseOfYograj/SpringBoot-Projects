@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +45,7 @@ public class BookingService {
     private static final String STATUS_REFUNDED = "REFUNDED";
 
     public static final BigDecimal DEFAULT_MOCK_FARE = new BigDecimal("500.00");
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final BookingRepository bookingRepository;
     private final JourneySeatInventoryRepository inventoryRepository;
@@ -144,6 +146,7 @@ public class BookingService {
         booking.setInventory(inventory);
         booking.setSeatAllocation(allocation);
         booking.setBookingRef("RB-" + UUID.randomUUID().toString().replace("-", ""));
+        booking.setPnr(generateUniquePnr());
         booking.setBookingStatus(PENDING_PAYMENT);
         booking.setPaymentStatus("PENDING");
         // Fare abhi model nahi hua, isliye amount client se nahi leta aur fake fare bhi set nahi karta.
@@ -497,6 +500,30 @@ public class BookingService {
     }
 
     @Transactional(readOnly = true)
+    public BookingDetailResponseDTO getBookingByPnr(String pnr, String username) {
+        if (pnr == null || pnr.isBlank()) {
+            throw new BadRequestException("PNR is required");
+        }
+        String trimmedPnr = pnr.trim();
+        if (!trimmedPnr.matches("^\\d{10}$")) {
+            throw new BadRequestException("PNR must be exactly 10 numeric digits");
+        }
+
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+
+        Booking booking = bookingRepository.findByPnr(trimmedPnr)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found for PNR: " + trimmedPnr));
+
+        if (!isAdmin(user) && !booking.getUser().getUserId().equals(user.getUserId())) {
+            // Prevent enumeration leaks: return consistent not-found response without revealing another user's PNR exists
+            throw new ResourceNotFoundException("Booking not found for PNR: " + trimmedPnr);
+        }
+
+        return toDetailResponse(booking);
+    }
+
+    @Transactional(readOnly = true)
     public PageResponseDTO<BookingDetailResponseDTO> getBookingHistory(int page, int size, String username) {
         if (page < 0) {
             throw new BadRequestException("Page index must not be less than zero");
@@ -534,6 +561,7 @@ public class BookingService {
         return new BookingDetailResponseDTO(
                 booking.getBookingId(),
                 booking.getBookingRef(),
+                booking.getPnr(),
                 bookingUser != null ? bookingUser.getUserId() : null,
                 bookingUser != null ? bookingUser.getUsername() : null,
                 journey != null ? journey.getJourneyId() : null,
@@ -564,6 +592,7 @@ public class BookingService {
         return new BookingResponseDTO(
                 booking.getBookingId(),
                 booking.getBookingRef(),
+                booking.getPnr(),
                 booking.getJourney().getJourneyId(),
                 booking.getSeat().getSeatId(),
                 booking.getCoach().getCoachNumber(),
@@ -573,6 +602,20 @@ public class BookingService {
                 booking.getAmount(),
                 booking.getCreatedAt()
         );
+    }
+
+    private String generateUniquePnr() {
+        for (int attempt = 0; attempt < 10; attempt++) {
+            StringBuilder sb = new StringBuilder(10);
+            for (int i = 0; i < 10; i++) {
+                sb.append(SECURE_RANDOM.nextInt(10));
+            }
+            String candidate = sb.toString();
+            if (!bookingRepository.existsByPnr(candidate)) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Failed to generate a unique 10-digit PNR after 10 attempts");
     }
 
     private boolean isAdmin(User user) {

@@ -30,6 +30,14 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     })
     Optional<Booking> findByBookingRef(String bookingRef);
 
+    boolean existsByPnr(String pnr);
+
+    @EntityGraph(attributePaths = {
+            "seatAllocation", "user", "journey", "journey.train",
+            "journey.fromStation", "journey.toStation", "coach", "seat"
+    })
+    Optional<Booking> findByPnr(String pnr);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @EntityGraph(attributePaths = {
             "seatAllocation", "user", "journey", "journey.train",

@@ -67,9 +67,14 @@ class BookingQueryControllerTests {
     }
 
     private BookingDetailResponseDTO sampleDetail(String bookingRef, String username) {
+        return sampleDetail(bookingRef, username, null);
+    }
+
+    private BookingDetailResponseDTO sampleDetail(String bookingRef, String username, String pnr) {
         return new BookingDetailResponseDTO(
                 101L,
                 bookingRef,
+                pnr,
                 55L,
                 username,
                 201L,
@@ -248,5 +253,85 @@ class BookingQueryControllerTests {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.message").value("Page size must not exceed 100"));
+    }
+
+    @Test
+    @WithMockUser(username = "passenger1", roles = {"USER"})
+    void getBookingByPnr_authenticatedOwner_returns200AndDetailResponse() throws Exception {
+        BookingDetailResponseDTO dto = sampleDetail("RB-PNR-001", "passenger1", "1234567890");
+        when(bookingService.getBookingByPnr("1234567890", "passenger1")).thenReturn(dto);
+
+        mockMvc.perform(get("/api/bookings/pnr/1234567890")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pnr").value("1234567890"))
+                .andExpect(jsonPath("$.bookingRef").value("RB-PNR-001"))
+                .andExpect(jsonPath("$.username").value("passenger1"))
+                .andExpect(jsonPath("$.trainNumber").value("12951"))
+                .andExpect(jsonPath("$.bookingStatus").value("CONFIRMED"));
+    }
+
+    @Test
+    void getBookingByPnr_unauthenticated_returns401() throws Exception {
+        mockMvc.perform(get("/api/bookings/pnr/1234567890")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(username = "passenger1", roles = {"USER"})
+    void getBookingByPnr_notFound_returns404ApiErrorResponse() throws Exception {
+        when(bookingService.getBookingByPnr("9999999999", "passenger1"))
+                .thenThrow(new ResourceNotFoundException("Booking not found for PNR: 9999999999"));
+
+        mockMvc.perform(get("/api/bookings/pnr/9999999999")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value("Booking not found for PNR: 9999999999"));
+    }
+
+    @Test
+    @WithMockUser(username = "attacker", roles = {"USER"})
+    void getBookingByPnr_crossUserAccess_returns404ApiErrorResponse() throws Exception {
+        // Attacker querying victim's PNR receives 404 (not 403) to prevent enumeration
+        when(bookingService.getBookingByPnr("1234567890", "attacker"))
+                .thenThrow(new ResourceNotFoundException("Booking not found for PNR: 1234567890"));
+
+        mockMvc.perform(get("/api/bookings/pnr/1234567890")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value("Booking not found for PNR: 1234567890"));
+    }
+
+    @Test
+    @WithMockUser(username = "admin_user", roles = {"ADMIN"})
+    void getBookingByPnr_adminUser_returns200() throws Exception {
+        BookingDetailResponseDTO dto = sampleDetail("RB-PNR-002", "passenger1", "9876543210");
+        when(bookingService.getBookingByPnr("9876543210", "admin_user")).thenReturn(dto);
+
+        mockMvc.perform(get("/api/bookings/pnr/9876543210")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pnr").value("9876543210"))
+                .andExpect(jsonPath("$.bookingRef").value("RB-PNR-002"))
+                .andExpect(jsonPath("$.username").value("passenger1"));
+    }
+
+    @Test
+    @WithMockUser(username = "passenger1", roles = {"USER"})
+    void getBookingByPnr_invalidPnrFormat_returns400ApiErrorResponse() throws Exception {
+        when(bookingService.getBookingByPnr("invalid-pnr", "passenger1"))
+                .thenThrow(new BadRequestException("PNR must be exactly 10 digits"));
+
+        mockMvc.perform(get("/api/bookings/pnr/invalid-pnr")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("PNR must be exactly 10 digits"));
     }
 }

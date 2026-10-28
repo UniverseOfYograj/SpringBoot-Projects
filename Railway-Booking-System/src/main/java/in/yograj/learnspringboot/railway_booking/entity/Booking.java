@@ -42,6 +42,9 @@ public class Booking {
     @Column(name = "booking_ref", nullable = false, unique = true, length = 40)
     private String bookingRef;
 
+    @Column(name = "pnr", nullable = false, unique = true, length = 10)
+    private String pnr;
+
     @Column(name = "booking_status", nullable = false, length = 40)
     private String bookingStatus = "PENDING_PAYMENT";
 
@@ -115,6 +118,14 @@ public class Booking {
 
     public String getBookingRef() {
         return bookingRef;
+    }
+
+    public String getPnr() {
+        return pnr;
+    }
+
+    public void setPnr(String pnr) {
+        this.pnr = pnr;
     }
 
     public void setBookingRef(String bookingRef) {

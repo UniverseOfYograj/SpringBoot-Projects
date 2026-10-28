@@ -10,6 +10,7 @@ import in.yograj.learnspringboot.railway_booking.dto.TrainStopRequestDTO;
 import in.yograj.learnspringboot.railway_booking.entity.*;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
+import org.springframework.dao.DataIntegrityViolationException;
 import in.yograj.learnspringboot.railway_booking.integration.githubdata.GitHubRailwayDataImportService;
 import in.yograj.learnspringboot.railway_booking.integration.railradar.RailRadarClient;
 import in.yograj.learnspringboot.railway_booking.repository.*;
@@ -356,6 +357,121 @@ class BookingQueryLifecycleTests {
                 bookingService.getBookingHistory(0, 101, user.getUsername())
         );
         assertTrue(ex4.getMessage().contains("Page size must not exceed 100"));
+    }
+
+    @Test
+    void createBooking_generatesExactly10DigitNumericPnr() {
+        User user = createUser("pnr-gen-user", "ROLE_USER");
+        BookingResponseDTO created = createPendingBookingForSeat(inventories.get(0), user, 10);
+
+        assertNotNull(created.pnr());
+        assertEquals(10, created.pnr().length());
+        assertTrue(created.pnr().matches("^\\d{10}$"), "PNR must consist of exactly 10 numeric digits");
+
+        Booking entity = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        assertEquals(created.pnr(), entity.getPnr());
+    }
+
+    @Test
+    void createBooking_multipleBookingsReceiveUniquePnrs() {
+        User user = createUser("pnr-multi-user", "ROLE_USER");
+        BookingResponseDTO b1 = createPendingBookingForSeat(inventories.get(0), user, 10);
+        BookingResponseDTO b2 = createPendingBookingForSeat(inventories.get(1), user, 10);
+        BookingResponseDTO b3 = createPendingBookingForSeat(inventories.get(2), user, 10);
+
+        assertNotNull(b1.pnr());
+        assertNotNull(b2.pnr());
+        assertNotNull(b3.pnr());
+        assertNotEquals(b1.pnr(), b2.pnr());
+        assertNotEquals(b2.pnr(), b3.pnr());
+        assertNotEquals(b1.pnr(), b3.pnr());
+    }
+
+    @Test
+    void getBookingByPnr_authenticatedOwner_returnsDetailResponseWithPnr() {
+        User user = createUser("pnr-owner-user", "ROLE_USER");
+        BookingResponseDTO created = createPendingBookingForSeat(inventories.get(0), user, 10);
+
+        BookingDetailResponseDTO detail = bookingService.getBookingByPnr(created.pnr(), user.getUsername());
+
+        assertNotNull(detail);
+        assertEquals(created.pnr(), detail.pnr());
+        assertEquals(created.bookingRef(), detail.bookingRef());
+        assertEquals(user.getUserId(), detail.userId());
+        assertEquals(user.getUsername(), detail.username());
+        assertEquals(journeyId, detail.journeyId());
+        assertEquals("PENDING_PAYMENT", detail.bookingStatus());
+        assertEquals("PENDING", detail.paymentStatus());
+    }
+
+    @Test
+    void getBookingByPnr_adminUser_canViewAnyBookingByPnr() {
+        User regularUser = createUser("pnr-reg-user", "ROLE_USER");
+        User adminUser = createUser("pnr-admin-user", "ROLE_ADMIN");
+
+        BookingResponseDTO created = createPendingBookingForSeat(inventories.get(0), regularUser, 10);
+
+        BookingDetailResponseDTO detail = bookingService.getBookingByPnr(created.pnr(), adminUser.getUsername());
+
+        assertNotNull(detail);
+        assertEquals(created.pnr(), detail.pnr());
+        assertEquals(created.bookingRef(), detail.bookingRef());
+        assertEquals(regularUser.getUserId(), detail.userId());
+        assertEquals(regularUser.getUsername(), detail.username());
+    }
+
+    @Test
+    void getBookingByPnr_crossUserAccess_throwsResourceNotFoundExceptionWithoutLeakingExistence() {
+        User user1 = createUser("pnr-cross-u1", "ROLE_USER");
+        User user2 = createUser("pnr-cross-u2", "ROLE_USER");
+
+        BookingResponseDTO created = createPendingBookingForSeat(inventories.get(0), user1, 10);
+
+        // User 2 attempts to query User 1's booking by PNR
+        ResourceNotFoundException ex = assertThrows(ResourceNotFoundException.class, () ->
+                bookingService.getBookingByPnr(created.pnr(), user2.getUsername())
+        );
+
+        assertTrue(ex.getMessage().contains("Booking not found for PNR: " + created.pnr()),
+                "Cross-user lookup must throw ResourceNotFoundException to prevent leaking PNR existence");
+    }
+
+    @Test
+    void getBookingByPnr_unknownPnr_throwsResourceNotFoundException() {
+        User user = createUser("pnr-unknown-user", "ROLE_USER");
+
+        ResourceNotFoundException ex = assertThrows(ResourceNotFoundException.class, () ->
+                bookingService.getBookingByPnr("9999999999", user.getUsername())
+        );
+
+        assertTrue(ex.getMessage().contains("Booking not found for PNR: 9999999999"));
+    }
+
+    @Test
+    void getBookingByPnr_invalidPnrFormat_throwsBadRequestException() {
+        User user = createUser("pnr-invalid-user", "ROLE_USER");
+
+        assertThrows(BadRequestException.class, () -> bookingService.getBookingByPnr(null, user.getUsername()));
+        assertThrows(BadRequestException.class, () -> bookingService.getBookingByPnr("", user.getUsername()));
+        assertThrows(BadRequestException.class, () -> bookingService.getBookingByPnr("   ", user.getUsername()));
+        assertThrows(BadRequestException.class, () -> bookingService.getBookingByPnr("123456789", user.getUsername()));
+        assertThrows(BadRequestException.class, () -> bookingService.getBookingByPnr("12345678901", user.getUsername()));
+        assertThrows(BadRequestException.class, () -> bookingService.getBookingByPnr("12345ABCDE", user.getUsername()));
+        assertThrows(BadRequestException.class, () -> bookingService.getBookingByPnr("123-456-78", user.getUsername()));
+    }
+
+    @Test
+    void pnr_databaseUniqueConstraintEnforced() {
+        User user = createUser("pnr-uniq-user", "ROLE_USER");
+        BookingResponseDTO b1 = createPendingBookingForSeat(inventories.get(0), user, 10);
+        BookingResponseDTO b2 = createPendingBookingForSeat(inventories.get(1), user, 10);
+
+        Booking entity2 = bookingRepository.findByBookingRef(b2.bookingRef()).orElseThrow();
+        entity2.setPnr(b1.pnr());
+
+        assertThrows(DataIntegrityViolationException.class, () -> {
+            bookingRepository.saveAndFlush(entity2);
+        });
     }
 
     private Station station(String code, String name) {

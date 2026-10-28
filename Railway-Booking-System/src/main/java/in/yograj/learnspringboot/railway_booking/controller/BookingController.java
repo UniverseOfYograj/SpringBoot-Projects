@@ -69,6 +69,14 @@ public class BookingController {
     }
 
     @PreAuthorize("isAuthenticated()")
+    @GetMapping("/pnr/{pnr}")
+    public ResponseEntity<BookingDetailResponseDTO> getBookingByPnr(
+            @PathVariable String pnr,
+            Authentication authentication) {
+        return ResponseEntity.ok(bookingService.getBookingByPnr(pnr, authentication.getName()));
+    }
+
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{bookingRef}")
     public ResponseEntity<BookingDetailResponseDTO> getBookingByRef(
             @PathVariable String bookingRef,
