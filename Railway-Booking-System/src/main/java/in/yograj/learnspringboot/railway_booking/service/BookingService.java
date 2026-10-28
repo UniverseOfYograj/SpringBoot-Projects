@@ -37,6 +37,7 @@ public class BookingService {
     private static final String EXPIRED = "EXPIRED";
     private static final String PENDING_PAYMENT = "PENDING_PAYMENT";
     private static final String CONFIRMED = "CONFIRMED";
+    private static final String CANCELLED = "CANCELLED";
     private static final String STATUS_SUCCESS = "SUCCESS";
     private static final String STATUS_FAILED = "FAILED";
 
@@ -334,6 +335,75 @@ public class BookingService {
                 "Payment successful and booking confirmed",
                 now
         );
+    }
+
+    @Transactional
+    public BookingDetailResponseDTO cancelBooking(String bookingRef, String username) {
+        if (bookingRef == null || bookingRef.isBlank()) {
+            throw new BadRequestException("Booking reference is required");
+        }
+
+        // 1. Pessimistic lock on booking to serialize concurrent cancellations or payments
+        Booking booking = bookingRepository.findByBookingRefForUpdate(bookingRef.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found for reference: " + bookingRef));
+
+        // 2. Ownership verification: user can cancel only their own booking; admin follows authorization rules
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+        if (!isAdmin(user) && !booking.getUser().getUserId().equals(user.getUserId())) {
+            throw new AccessDeniedException("You are not authorized to cancel this booking");
+        }
+
+        // 3. Status eligibility checks
+        if (CANCELLED.equalsIgnoreCase(booking.getBookingStatus())) {
+            throw new IllegalStateException("Booking has already been cancelled");
+        }
+        if (EXPIRED.equalsIgnoreCase(booking.getBookingStatus())) {
+            throw new IllegalStateException("Booking cannot be cancelled in status: " + booking.getBookingStatus());
+        }
+        if (!CONFIRMED.equalsIgnoreCase(booking.getBookingStatus())
+                && !PENDING_PAYMENT.equalsIgnoreCase(booking.getBookingStatus())) {
+            throw new IllegalStateException("Booking cannot be cancelled in status: " + booking.getBookingStatus());
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // 4. Lock parent inventory and normalize legacy hold or blocked state if present
+        if (booking.getJourney() != null && booking.getSeat() != null) {
+            inventoryRepository.findByJourneyAndSeatForUpdate(
+                    booking.getJourney().getJourneyId(), booking.getSeat().getSeatId())
+                    .ifPresent(inventory -> {
+                        if (HOLD.equalsIgnoreCase(inventory.getStatus())) {
+                            inventory.setStatus("AVAILABLE");
+                            inventory.setHoldExpiresAt(null);
+                            inventory.setHoldOwner(null);
+                            inventory.setUpdatedAt(now);
+                            inventoryRepository.save(inventory);
+                        } else if ("BLOCKED".equalsIgnoreCase(inventory.getStatus())) {
+                            inventory.setStatus("AVAILABLE");
+                            inventory.setUpdatedAt(now);
+                            inventoryRepository.save(inventory);
+                        }
+                    });
+        }
+
+        // 5. Release seat allocation: set status to CANCELLED so GiST constraint and isBlocking treat seat as available
+        SeatAllocation allocation = booking.getSeatAllocation();
+        if (allocation != null) {
+            allocation.setStatus(CANCELLED);
+            allocation.setUpdatedAt(now);
+            allocationRepository.save(allocation);
+        }
+
+        // 6. Update booking status
+        booking.setBookingStatus(CANCELLED);
+        if ("PENDING".equalsIgnoreCase(booking.getPaymentStatus())) {
+            booking.setPaymentStatus(CANCELLED);
+        }
+        // Note: If payment was SUCCESS, paymentStatus remains SUCCESS because refunds are not automated/supported in the current mock payment system.
+        bookingRepository.save(booking);
+
+        return toDetailResponse(booking);
     }
 
     @Transactional(readOnly = true)

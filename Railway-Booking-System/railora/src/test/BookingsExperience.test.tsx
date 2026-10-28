@@ -13,6 +13,7 @@ vi.mock('@/features/booking/api', () => ({
   bookingApi: {
     getBookingHistory: vi.fn(),
     payBooking: vi.fn(),
+    cancelBooking: vi.fn(),
   },
 }));
 
@@ -170,8 +171,10 @@ describe('BookingsPage experience', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole('heading', { name: /no bookings found/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /search trains/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /no bookings found/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /search trains/i })).toBeInTheDocument();
+    });
   });
 
   it('renders booking cards and handles payment action with idempotency key', async () => {
@@ -326,5 +329,109 @@ describe('BookingsPage experience', () => {
     expect(mockedBookingApi.payBooking).toHaveBeenCalledTimes(2);
     expect(mockedBookingApi.payBooking.mock.calls[1][1]).toEqual(firstAttempt);
     await waitFor(() => expect(mockedBookingApi.getBookingHistory).toHaveBeenCalledTimes(2));
+  });
+
+  it('opens cancellation confirmation modal with refund notice and allows dismissal', async () => {
+    setSession(testTokens);
+    mockedBookingApi.getBookingHistory.mockResolvedValueOnce(mockBookingsPageResponse);
+
+    render(
+      <MemoryRouter initialEntries={['/bookings']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bookings" element={<BookingsPage />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    const cancelBtn = await screen.findByRole('button', { name: /cancel booking bkg-20261026-mas01/i });
+    expect(cancelBtn).toBeInTheDocument();
+
+    fireEvent.click(cancelBtn);
+
+    const modal = await screen.findByRole('dialog');
+    expect(modal).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /confirm cancellation/i })).toBeInTheDocument();
+    expect(screen.getByText(/automated refunds are not supported/i)).toBeInTheDocument();
+
+    // Dismiss by clicking Keep Booking
+    const keepBtn = screen.getByRole('button', { name: /keep booking/i });
+    fireEvent.click(keepBtn);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(mockedBookingApi.cancelBooking).not.toHaveBeenCalled();
+  });
+
+  it('cancels confirmed booking and updates status upon confirmation', async () => {
+    setSession(testTokens);
+    mockedBookingApi.getBookingHistory.mockResolvedValueOnce(mockBookingsPageResponse);
+    mockedBookingApi.cancelBooking.mockResolvedValueOnce({
+      ...mockBookingsPageResponse.content[0],
+      bookingStatus: 'CANCELLED',
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/bookings']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bookings" element={<BookingsPage />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    const cancelBtn = await screen.findByRole('button', { name: /cancel booking bkg-20261026-mas01/i });
+    fireEvent.click(cancelBtn);
+
+    const confirmBtn = await screen.findByRole('button', { name: /confirm cancellation/i });
+
+    // Mock history reload with cancelled status
+    mockedBookingApi.getBookingHistory.mockResolvedValueOnce({
+      ...mockBookingsPageResponse,
+      content: [
+        {
+          ...mockBookingsPageResponse.content[0],
+          bookingStatus: 'CANCELLED',
+        },
+        mockBookingsPageResponse.content[1],
+      ],
+    });
+
+    fireEvent.click(confirmBtn);
+
+    expect(mockedBookingApi.cancelBooking).toHaveBeenCalledWith('BKG-20261026-MAS01');
+    expect(await screen.findByRole('status')).toHaveTextContent(/has been cancelled successfully/i);
+    await waitFor(() => expect(mockedBookingApi.getBookingHistory).toHaveBeenCalledTimes(2));
+  });
+
+  it('displays error alert banner when cancellation fails', async () => {
+    setSession(testTokens);
+    mockedBookingApi.getBookingHistory.mockResolvedValueOnce(mockBookingsPageResponse);
+    mockedBookingApi.cancelBooking.mockRejectedValueOnce({
+      response: {
+        data: {
+          message: 'Booking has already been cancelled',
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/bookings']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bookings" element={<BookingsPage />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    const cancelBtn = await screen.findByRole('button', { name: /cancel booking bkg-20261026-mas01/i });
+    fireEvent.click(cancelBtn);
+
+    const confirmBtn = await screen.findByRole('button', { name: /confirm cancellation/i });
+    fireEvent.click(confirmBtn);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/booking has already been cancelled/i);
   });
 });

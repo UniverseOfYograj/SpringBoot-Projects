@@ -31,7 +31,10 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     Optional<Booking> findByBookingRef(String bookingRef);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @EntityGraph(attributePaths = {"seatAllocation", "user", "journey", "coach", "seat"})
+    @EntityGraph(attributePaths = {
+            "seatAllocation", "user", "journey", "journey.train",
+            "journey.fromStation", "journey.toStation", "coach", "seat"
+    })
     @Query("SELECT b FROM Booking b WHERE b.bookingRef = :bookingRef")
     Optional<Booking> findByBookingRefForUpdate(@Param("bookingRef") String bookingRef);
 

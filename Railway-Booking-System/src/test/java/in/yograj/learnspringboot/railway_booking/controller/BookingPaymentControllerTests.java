@@ -1,5 +1,6 @@
 package in.yograj.learnspringboot.railway_booking.controller;
 
+import in.yograj.learnspringboot.railway_booking.dto.BookingDetailResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PaymentRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PaymentResponseDTO;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
@@ -22,11 +23,14 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -198,5 +202,95 @@ class BookingPaymentControllerTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(username = "regular-user", roles = {"USER"})
+    void cancelBooking_success_returns200AndDetailResponse() throws Exception {
+        BookingDetailResponseDTO detailDTO = new BookingDetailResponseDTO(
+                101L, "RB-CANCEL-1", 1L, "regular-user",
+                10L, "12952", "Mumbai Rajdhani",
+                "NDLS", "NEW DELHI", "BCT", "Mumbai Central",
+                LocalDate.of(2026, 10, 27), LocalTime.of(16, 30), LocalTime.of(8, 35),
+                1L, "B1", "SECOND_SEATING", 1L, 1, "SECOND_SEATING", 1L,
+                "CANCELLED", "SUCCESS", new BigDecimal("500.00"), LocalDateTime.now()
+        );
+
+        when(bookingService.cancelBooking(eq("RB-CANCEL-1"), eq("regular-user")))
+                .thenReturn(detailDTO);
+
+        mockMvc.perform(post("/api/bookings/RB-CANCEL-1/cancel"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bookingRef").value("RB-CANCEL-1"))
+                .andExpect(jsonPath("$.bookingStatus").value("CANCELLED"))
+                .andExpect(jsonPath("$.paymentStatus").value("SUCCESS"));
+    }
+
+    @Test
+    @WithMockUser(username = "regular-user", roles = {"USER"})
+    void cancelBooking_viaDelete_returns200AndDetailResponse() throws Exception {
+        BookingDetailResponseDTO detailDTO = new BookingDetailResponseDTO(
+                101L, "RB-CANCEL-DEL", 1L, "regular-user",
+                10L, "12952", "Mumbai Rajdhani",
+                "NDLS", "NEW DELHI", "BCT", "Mumbai Central",
+                LocalDate.of(2026, 10, 27), LocalTime.of(16, 30), LocalTime.of(8, 35),
+                1L, "B1", "SECOND_SEATING", 1L, 1, "SECOND_SEATING", 1L,
+                "CANCELLED", "SUCCESS", new BigDecimal("500.00"), LocalDateTime.now()
+        );
+
+        when(bookingService.cancelBooking(eq("RB-CANCEL-DEL"), eq("regular-user")))
+                .thenReturn(detailDTO);
+
+        mockMvc.perform(delete("/api/bookings/RB-CANCEL-DEL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bookingRef").value("RB-CANCEL-DEL"))
+                .andExpect(jsonPath("$.bookingStatus").value("CANCELLED"));
+    }
+
+    @Test
+    void cancelBooking_unauthenticated_returns401() throws Exception {
+        mockMvc.perform(post("/api/bookings/RB-UNAUTH/cancel"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(username = "attacker-user", roles = {"USER"})
+    void cancelBooking_unauthorizedUser_returns403ApiErrorResponse() throws Exception {
+        when(bookingService.cancelBooking(eq("RB-OTHER"), eq("attacker-user")))
+                .thenThrow(new AccessDeniedException("You are not authorized to cancel this booking"));
+
+        mockMvc.perform(post("/api/bookings/RB-OTHER/cancel"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.error").value("Forbidden"))
+                .andExpect(jsonPath("$.message").value("You are not authorized to cancel this booking"))
+                .andExpect(jsonPath("$.path").value("/api/bookings/RB-OTHER/cancel"));
+    }
+
+    @Test
+    @WithMockUser(username = "regular-user", roles = {"USER"})
+    void cancelBooking_alreadyCancelled_returns409Conflict() throws Exception {
+        when(bookingService.cancelBooking(eq("RB-ALREADY-CANCELLED"), eq("regular-user")))
+                .thenThrow(new IllegalStateException("Booking has already been cancelled"));
+
+        mockMvc.perform(post("/api/bookings/RB-ALREADY-CANCELLED/cancel"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.error").value("Conflict"))
+                .andExpect(jsonPath("$.message").value("Booking has already been cancelled"))
+                .andExpect(jsonPath("$.path").value("/api/bookings/RB-ALREADY-CANCELLED/cancel"));
+    }
+
+    @Test
+    @WithMockUser(username = "regular-user", roles = {"USER"})
+    void cancelBooking_notFound_returns404() throws Exception {
+        when(bookingService.cancelBooking(eq("RB-UNKNOWN"), eq("regular-user")))
+                .thenThrow(new ResourceNotFoundException("Booking not found for reference: RB-UNKNOWN"));
+
+        mockMvc.perform(post("/api/bookings/RB-UNKNOWN/cancel"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value("Booking not found for reference: RB-UNKNOWN"));
     }
 }

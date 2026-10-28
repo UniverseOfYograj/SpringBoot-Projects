@@ -45,6 +45,7 @@ export const API_PATHS = {
     CREATE:  '/bookings',
     BY_REF:  (ref: string) => `/bookings/${ref}`,
     PAY:     (ref: string) => `/bookings/${ref}/pay`,
+    CANCEL:  (ref: string) => `/bookings/${ref}/cancel`,
   },
   WAITING_ROOM: {
     JOIN:   '/vwr/queue/join',

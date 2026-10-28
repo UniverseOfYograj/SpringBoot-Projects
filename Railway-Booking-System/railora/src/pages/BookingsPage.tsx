@@ -28,7 +28,10 @@ export default function BookingsPage() {
   const [bookings, setBookings] = useState<BookingDetailResponseDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [payingRef, setPayingRef] = useState<string | null>(null);
+  const [cancellingRef, setCancellingRef] = useState<string | null>(null);
+  const [confirmCancelBooking, setConfirmCancelBooking] = useState<BookingDetailResponseDTO | null>(null);
   const paymentsInFlight = useRef(new Set<string>());
 
   async function loadBookings() {
@@ -85,6 +88,31 @@ export default function BookingsPage() {
     } finally {
       paymentsInFlight.current.delete(bookingRef);
       setPayingRef(null);
+    }
+  }
+
+  async function handleConfirmCancel(bookingRef: string) {
+    setCancellingRef(bookingRef);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      await bookingApi.cancelBooking(bookingRef);
+      setSuccessMessage(`Booking ${bookingRef} has been cancelled successfully. Seat allocation has been released.`);
+      setConfirmCancelBooking(null);
+      await loadBookings();
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+          : null;
+      setError(
+        msg ||
+          (err instanceof Error ? err.message : null) ||
+          'Failed to cancel booking. Please try again.',
+      );
+      setConfirmCancelBooking(null);
+    } finally {
+      setCancellingRef(null);
     }
   }
 
@@ -170,6 +198,25 @@ export default function BookingsPage() {
         </div>
       )}
 
+      {successMessage && (
+        <div
+          role="status"
+          className="mt-6 flex items-center justify-between rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-800"
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={18} className="text-teal-600 shrink-0" />
+            <span>{successMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSuccessMessage(null)}
+            className="text-teal-700/80 hover:text-teal-800 text-xs font-semibold underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className="py-20 text-center">
           <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
@@ -198,6 +245,7 @@ export default function BookingsPage() {
           {bookings.map((b) => {
             const isConfirmed = b.bookingStatus === 'CONFIRMED';
             const isPendingPayment = b.bookingStatus === 'PENDING_PAYMENT';
+            const isCancelled = b.bookingStatus === 'CANCELLED';
 
             return (
               <Card
@@ -218,7 +266,7 @@ export default function BookingsPage() {
 
                     <div className="flex items-center gap-2">
                       <Badge
-                        variant={isConfirmed ? 'teal' : isPendingPayment ? 'navy' : 'neutral'}
+                        variant={isConfirmed ? 'teal' : isPendingPayment ? 'navy' : isCancelled ? 'danger' : 'neutral'}
                         size="sm"
                       >
                         {b.bookingStatus}
@@ -303,28 +351,140 @@ export default function BookingsPage() {
                         <AlertCircle size={14} className="text-amber-600" />
                         Payment pending for this reserved seat. Complete payment to secure booking.
                       </span>
-                      <Button
-                        variant="accent"
-                        size="sm"
-                        onClick={() => handleCompletePayment(b.bookingRef)}
-                        isLoading={payingRef === b.bookingRef}
-                      >
-                        <CreditCard size={14} />
-                        Pay Now
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setConfirmCancelBooking(b)}
+                          aria-label={`Cancel booking ${b.bookingRef}`}
+                        >
+                          Cancel Booking
+                        </Button>
+                        <Button
+                          variant="accent"
+                          size="sm"
+                          onClick={() => handleCompletePayment(b.bookingRef)}
+                          isLoading={payingRef === b.bookingRef}
+                        >
+                          <CreditCard size={14} />
+                          Pay Now
+                        </Button>
+                      </div>
                     </div>
                   )}
 
                   {isConfirmed && (
-                    <div className="mt-4 flex items-center gap-1 text-2xs text-teal-700 border-t border-surface-border/40 pt-2">
-                      <CheckCircle2 size={12} />
-                      Confirmed reservation. Carry valid photo ID during travel.
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-surface-border/40 pt-3">
+                      <div className="flex items-center gap-1 text-2xs text-teal-700">
+                        <CheckCircle2 size={12} />
+                        Confirmed reservation. Carry valid photo ID during travel.
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setConfirmCancelBooking(b)}
+                        aria-label={`Cancel booking ${b.bookingRef}`}
+                      >
+                        Cancel Ticket
+                      </Button>
+                    </div>
+                  )}
+
+                  {isCancelled && (
+                    <div className="mt-4 flex items-center gap-1.5 text-2xs text-rose-700 border-t border-surface-border/40 pt-2 font-medium">
+                      <AlertCircle size={13} className="text-rose-600 shrink-0" />
+                      This booking has been cancelled and the reserved seat has been released.
                     </div>
                   )}
                 </CardContent>
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {/* Cancellation Confirmation Modal */}
+      {confirmCancelBooking && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-950/60 backdrop-blur-xs animate-in fade-in"
+        >
+          <div className="relative w-full max-w-lg rounded-2xl border border-surface-border bg-surface-card p-6 shadow-modal">
+            <div className="flex items-center justify-between border-b border-surface-border/60 pb-3">
+              <div className="flex items-center gap-2 text-rose-600">
+                <AlertCircle size={20} />
+                <h3 id="cancel-modal-title" className="text-lg font-bold text-ink-primary">
+                  Confirm Cancellation
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmCancelBooking(null)}
+                className="text-ink-muted hover:text-ink-primary p-1 rounded-md text-sm font-bold"
+                aria-label="Close cancellation modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3 text-sm">
+              <p className="text-ink-secondary">
+                Are you sure you want to cancel your reservation for{' '}
+                <strong className="text-ink-primary">
+                  {confirmCancelBooking.trainName} ({confirmCancelBooking.trainNumber})
+                </strong>
+                ?
+              </p>
+
+              <div className="rounded-xl border border-surface-border bg-surface-muted p-3 text-xs space-y-1.5 font-mono text-ink-secondary">
+                <div>
+                  PNR: <strong className="text-navy-700">{confirmCancelBooking.bookingRef}</strong>
+                </div>
+                <div>
+                  Route: {confirmCancelBooking.fromStationCode} → {confirmCancelBooking.toStationCode} on{' '}
+                  {confirmCancelBooking.journeyDate}
+                </div>
+                <div>
+                  Berth: Coach {confirmCancelBooking.coachNumber}, #{confirmCancelBooking.seatNumber} (
+                  {confirmCancelBooking.seatType})
+                </div>
+              </div>
+
+              {confirmCancelBooking.bookingStatus === 'CONFIRMED' && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <div className="font-semibold flex items-center gap-1.5 mb-1">
+                    <AlertCircle size={14} className="text-amber-700 shrink-0" />
+                    <span>Seat Release &amp; Refund Notice</span>
+                  </div>
+                  <p className="text-2xs leading-relaxed text-amber-800">
+                    Your seat will be immediately released and returned to general availability for other travelers.
+                    Note: Automated refunds are not supported by the mock payment gateway in this version.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3 border-t border-surface-border/60 pt-4">
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => setConfirmCancelBooking(null)}
+                disabled={cancellingRef !== null}
+              >
+                Keep Booking
+              </Button>
+              <Button
+                variant="danger"
+                size="md"
+                onClick={() => handleConfirmCancel(confirmCancelBooking.bookingRef)}
+                isLoading={cancellingRef === confirmCancelBooking.bookingRef}
+              >
+                Confirm Cancellation
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </section>

@@ -114,4 +114,14 @@ export const bookingApi = {
     );
     return response.data;
   },
+
+  /**
+   * Cancel an eligible booking (confirmed or pending payment).
+   */
+  async cancelBooking(bookingRef: string): Promise<BookingDetailResponseDTO> {
+    const response = await apiClient.post<BookingDetailResponseDTO>(
+      API_PATHS.BOOKINGS.CANCEL(bookingRef),
+    );
+    return response.data;
+  },
 };
