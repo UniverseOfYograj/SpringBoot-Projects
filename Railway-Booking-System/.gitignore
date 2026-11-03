@@ -60,6 +60,12 @@ build/
 !.env.example
 application-local.properties
 
+# Secret files and credential mounts
+/secrets/
+/monitoring/secrets/*
+!/monitoring/secrets/*.example
+!/monitoring/secrets/.gitkeep
+
 ### Performance Testing & Backups ###
 backups/
 performance/results/*html-report/
@@ -69,3 +75,8 @@ performance/results/*.log
 jmeter.log
 performance/results/phase-b-10-users.jtl
 performance/results/phase-b-10-users-corrected.jtl
+*.jtl
+railora/e2e/screenshots/
+
+### Personal Files ###
+Yograj_Tripathi_Resume.*

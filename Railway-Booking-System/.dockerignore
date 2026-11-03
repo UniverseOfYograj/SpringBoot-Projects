@@ -1,0 +1,9 @@
+.git
+.github
+.mvn
+target
+railora
+performance
+.env
+.env.*
+!.env.example

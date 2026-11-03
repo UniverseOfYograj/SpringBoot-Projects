@@ -87,3 +87,158 @@ All historical test runs are archived and preserved in `performance/results/`:
 2. **Local Loopback Network:** All traffic runs over `localhost` (`::1`), avoiding real-world network packet loss, internet latency (typically 20–150 ms), TLS handshake overhead, and reverse-proxy/load-balancer layers.
 3. **Database Dataset Size:** The test executes against seed/demo data. Production-scale volumes with millions of journey stops, historical bookings, and concurrent seat holds will require indexing validation and query optimization under scale.
 4. **Hardware Environment:** Results reflect a single developer machine running Spring Boot, PostgreSQL, and JMeter simultaneously. Real-world capacity benchmarks require dedicated load generators isolated from target servers.
+
+---
+
+## 6. Write-Lifecycle Smoke Test (`smoke-write-lifecycle.jmx`)
+
+> [!WARNING]
+> **Execution Safety & Database Preconditions**
+> - **Dedicated Test Database Required:** Do **not** execute this write test against production or a dirty development database. The test executes mutating transactions that persist rows in `seat_allocations`, `bookings`, `payment_transactions`, and `outbox_events`.
+> - **Pre-Created Test Account:** The test requires an existing active user account. Credentials must be passed at runtime via `-Jusername` and `-Jpassword`. Real credentials must never be committed.
+> - **Pre-Seeded Journey & Available Seat:** The target `journeyId` and `seatId` must exist and be free of overlapping holds or bookings before starting.
+> - **Decoupled Outbox Execution:** Outbox Kafka publishing defaults to disabled (`railway.outbox.kafka.enabled=false`), allowing the full transactional write path (`outbox_events` staging) to be tested without requiring a running Kafka broker.
+
+### Test Architecture & Sequenced Flow
+
+The smoke test executes a single-user, single-iteration lifecycle verifying the complete write chain:
+
+| Step | Sampler | Method | Endpoint | Authentication | Key Assertions & Data Extractions |
+|---|---|---|---|---|---|
+| 1 | `01_POST_Auth_Login` | `POST` | `/api/auth/login` | None (`permitAll`) | HTTP `200 OK`, extracts `access_token` from `$.accessToken` |
+| 2 | `02_POST_Seat_Hold` | `POST` | `/api/journeys/{journeyId}/seats/hold` | `Bearer ${access_token}` | HTTP `200 OK`, verifies status `HOLD` and `holdExpiresAt` |
+| 3 | `03_POST_Booking_Create` | `POST` | `/api/bookings` | `Bearer ${access_token}` | HTTP `201 Created`, extracts `bookingRef` and `pnr`, verifies `PENDING_PAYMENT` |
+| 4 | `04_POST_Booking_Pay` | `POST` | `/api/bookings/{bookingRef}/pay` | `Bearer ${access_token}` | HTTP `200 OK`, verifies `CONFIRMED` and `SUCCESS`, uses `SMOKE-PAY-${__UUID()}` idempotency key |
+| 5 | `05_POST_Booking_Cancel` | `POST` | `/api/bookings/{bookingRef}/cancel` | `Bearer ${access_token}` | HTTP `200 OK`, verifies `CANCELLED` and `REFUNDED`, releases seat allocation |
+
+### Parameter Reference
+
+All runtime parameters are fully configurable via `-J` JMeter properties. Mandatory parameters default to non-existent placeholders (`REQUIRED_*_NOT_SET`) to prevent accidental execution against active environments without explicit parameters:
+
+| Parameter | Default | Required? | Description |
+|---|---|---|---|
+| `host` | `localhost` | No | Target application host |
+| `port` | `8080` | No | Target application port |
+| `username` | `REQUIRED_USERNAME_NOT_SET` | **Yes** | Username of the test account |
+| `password` | `REQUIRED_PASSWORD_NOT_SET` | **Yes** | Password of the test account |
+| `journeyId` | `REQUIRED_JOURNEY_ID_NOT_SET` | **Yes** | Target journey ID with available inventory |
+| `seatId` | `REQUIRED_SEAT_ID_NOT_SET` | **Yes** | Target seat ID on the journey |
+| `boardingStopId` | `null` | Optional | Boarding stop ID (defaults to full route origin) |
+| `alightingStopId` | `null` | Optional | Alighting stop ID (defaults to full route destination) |
+| `holdMinutes` | `10` | No | Hold duration for the seat reservation |
+| `bookingMode` | `GENERAL` | No | Booking mode (`GENERAL` or `TATKAL`) |
+| `paymentMethod` | `MOCK_UPI` | No | Payment gateway method |
+| `threads` | `1` | No | Virtual users (must remain 1 for smoke test) |
+| `rampup` | `1` | No | Ramp-up period in seconds |
+| `loops` | `1` | No | Number of lifecycle iterations per thread |
+
+> [!NOTE]
+> **Segment & Stop ID Constraints**
+> - **Both Stop IDs Null:** Supported by the domain logic only if the journey has at least two dated stops in `journey_stops`. The domain automatically resolves to the journey's first stop sequence and last stop sequence.
+> - **Mixed Null Stop IDs:** If only one stop ID is provided, the backend rejects the request with HTTP `400 Bad Request` (`Both boardingJourneyStopId and alightingJourneyStopId are required`).
+> - **Both Stop IDs Provided:** Both IDs must belong to the target journey, and the boarding stop sequence must be strictly less than the alighting stop sequence.
+
+### Guarded Execution & Cascading Failure Prevention
+
+The test plan utilizes nested JMeter `IfController` blocks to prevent cascading invalid requests when earlier steps fail:
+1. **`01_POST_Auth_Login`**: Authenticates the test user.
+2. **`If Login Succeeded` (`vars.get('access_token') != 'NOT_FOUND'`)**: Only attempts seat hold if an access token was successfully extracted.
+3. **`If Seat Hold Succeeded` (`vars.get('JMeterThread.last_sample_ok') == 'true'`)**: Only attempts booking creation if the seat hold was granted.
+4. **`If Booking Created` (`vars.get('bookingRef') != 'NOT_FOUND'`)**: Contains both payment and cancellation. If booking creation fails, neither payment nor cancellation is called with `NOT_FOUND` references.
+
+### Cleanup Semantics & Failure Limitations
+
+- **Successful Lifecycle:** When payment succeeds, `05_POST_Booking_Cancel` transitions the booking to `CANCELLED`, releases the `SeatAllocation` (`status = CANCELLED`), and records a mock refund ledger entry (`paymentStatus = REFUNDED`).
+- **Payment Failure Path:** If payment fails (e.g. simulated failure or timeout), `05_POST_Booking_Cancel` still executes because `bookingRef` was created. In Railora, unpaid bookings in `PENDING_PAYMENT` are eligible for cancellation, which immediately releases the seat allocation.
+- **Hold Leak Limitation (Step 3 Failure):** If booking creation fails after a hold was acquired in Step 2, no `bookingRef` is generated, and the test cannot cancel the hold via API. The seat remains on `HOLD` until `holdMinutes` elapses, at which point the application's background `SeatHoldReaperService` (running every 30 seconds) automatically marks the hold `EXPIRED` and frees the inventory.
+- **Cancellation Failure Limitation (Step 5 Failure):** If cancellation fails after payment confirmation, the booking remains `CONFIRMED` and the allocation remains `BOOKED`. The background reaper will not expire confirmed bookings. The seat must be manually cancelled or the test database re-initialized.
+
+### Command Line Execution Template (Non-GUI Mode)
+
+Prerequisite: Ensure output directory `performance/results` exists before running:
+```powershell
+if (-not (Test-Path "performance/results")) { New-Item -ItemType Directory -Path "performance/results" }
+```
+
+Execution command:
+```powershell
+& "<path-to-jmeter>\bin\jmeter.bat" `
+  -n `
+  -t "performance/smoke-write-lifecycle.jmx" `
+  -l "performance/results/smoke-write-run.jtl" `
+  -j "performance/results/smoke-write-jmeter.log" `
+  -Jhost=localhost -Jport=8080 `
+  -Jusername=<TEST_USERNAME> -Jpassword=<TEST_PASSWORD> `
+  -JjourneyId=<JOURNEY_ID> -JseatId=<SEAT_ID> `
+  -Jthreads=1 -Jrampup=1 -Jloops=1
+```
+
+---
+
+## 7. Isolated Test Environment Setup (`railway_booking_test`)
+
+> [!CAUTION]
+> **Safety Rule: Never Execute Against Development Database**
+> Mutating performance or smoke tests must **never** target `railway_booking`. All tests must execute against a dedicated, disposable database `railway_booking_test`.
+
+### 7.1 Prerequisites & PostgreSQL Permissions
+1. **PostgreSQL Server:** Running locally on `localhost:5432` (PostgreSQL 12+ required for generated columns and range constraints).
+2. **Role Privileges:** The connecting PostgreSQL role (e.g. `postgres`) must have `CREATEDB` privilege to create `railway_booking_test` and permission to install `btree_gist` extension (required by Flyway migration V2).
+
+### 7.2 Safe Provisioning Workflow
+
+#### Step 1: Provision the Isolated Test Database
+Execute the safeguarded provisioner script (requires explicit confirmation flag):
+```powershell
+powershell -File scripts/setup_test_db.ps1 -ConfirmTargetDatabase "railway_booking_test"
+```
+*Safety guarantee:* The script halts immediately if `-ConfirmTargetDatabase` is missing, incorrect, or references `railway_booking`. It executes `scripts/create_railway_booking_test.sql` to idempotently create `railway_booking_test` and pre-provision `btree_gist`.
+
+#### Step 2: Launch Spring Boot Bound to `railway_booking_test`
+In a separate terminal, start the backend with explicit overrides:
+```powershell
+$env:DB_URL = "jdbc:postgresql://localhost:5432/railway_booking_test"
+$env:RAILWAY_OUTBOX_KAFKA_ENABLED = "false"
+$env:SEED_JOURNEY_DATA_ENABLED = "true"
+
+mvn spring-boot:run `
+  -Dspring-boot.run.arguments="--spring.datasource.url=jdbc:postgresql://localhost:5432/railway_booking_test --DB_URL=jdbc:postgresql://localhost:5432/railway_booking_test --railway.outbox.kafka.enabled=false --railway.data-seed.journey.enabled=true"
+```
+*What happens on startup:*
+- Flyway automatically applies migrations `V1__initial_schema.sql` through `V5__create_outbox_events.sql` on `railway_booking_test`.
+- `seedJourneyReferenceData` automatically seeds Train `12190`, Coach `B1` (4 seats), and a valid dated journey between `NDLS` and `BCT` with 2 dated stops.
+- Console logs confirm: `Database: jdbc:postgresql://localhost:5432/railway_booking_test`.
+
+#### Step 3: Register a Test User
+Once the backend is up on `http://localhost:8080`, register an isolated test user via the public endpoint (avoiding manual password hashing):
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8080/api/auth/register" -Method Post -ContentType "application/json" -Body (@{
+    username    = "smoke_test_user"
+    fullName    = "Smoke Test User"
+    email       = "smoke_test_user@railwaybooking.local"
+    phoneNumber = "9999999999"
+    password    = "SmokePassword123!"
+} | ConvertTo-Json)
+```
+
+#### Step 4: Run the JMeter Smoke Test
+Execute the write-lifecycle smoke test using the provisioned credentials and journey data:
+```powershell
+& "<path-to-jmeter>\bin\jmeter.bat" `
+  -n `
+  -t "performance/smoke-write-lifecycle.jmx" `
+  -l "performance/results/smoke-write-run.jtl" `
+  -j "performance/results/smoke-write-jmeter.log" `
+  -Jhost=localhost -Jport=8080 `
+  -Jusername=smoke_test_user -Jpassword=SmokePassword123! `
+  -JjourneyId=1 -JseatId=1 `
+  -Jthreads=1 -Jrampup=1 -Jloops=1
+```
+
+### 7.3 Disaster Recovery & Database Reset
+If a test failure leaves orphaned bookings or holds:
+```powershell
+# Drop and recreate the isolated test database safely:
+psql -h localhost -p 5432 -U postgres -d postgres -c "DROP DATABASE IF EXISTS railway_booking_test; CREATE DATABASE railway_booking_test;"
+```
+Re-running Step 2 will re-apply clean migrations and seed fresh fixtures in seconds.

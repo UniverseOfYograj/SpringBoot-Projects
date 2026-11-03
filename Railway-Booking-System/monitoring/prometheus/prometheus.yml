@@ -1,0 +1,38 @@
+# =============================================================================
+# Railora Prometheus Configuration (Phase 15C)
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+rule_files:
+  - "/etc/prometheus/alerts/*.yml"
+
+scrape_configs:
+  # 1. Prometheus Self-Monitoring
+  - job_name: "prometheus"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: "prometheus"
+          environment: "local"
+
+  # 2. Railora Application Actuator Metrics
+  - job_name: "railora"
+    metrics_path: "/actuator/prometheus"
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    # HTTP Basic authentication matching Railora's MetricsSecurityConfig
+    # Note: In production or containerized deployments, credentials match .env.example
+    basic_auth:
+      username: "promuser"
+      password: "pr0mP@ss!Secure42"
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: "railora"
+          environment: "local"
+          app: "railway-booking"

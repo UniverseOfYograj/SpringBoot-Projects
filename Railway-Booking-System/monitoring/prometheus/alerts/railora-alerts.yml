@@ -1,0 +1,137 @@
+# =============================================================================
+# Railora Alerting Rules (Phase 15C)
+# 10 Production Operational & Business Metric Alerts
+# =============================================================================
+
+groups:
+  - name: railora-service-health
+    rules:
+      # Alert 1: Service Availability
+      - alert: RailoraDown
+        expr: up{job="railora"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: railora
+        annotations:
+          summary: "Railora backend instance is down"
+          description: "Scrape job 'railora' has been failing for more than 1 minute. The backend service may be crashed or unresponsive."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#railora-down"
+
+      # Alert 2: Health / Readiness Degradation
+      - alert: ReadinessDown
+        expr: up{job="railora"} == 0 or absent(up{job="railora"}) == 1
+        for: 2m
+        labels:
+          severity: warning
+          service: railora
+        annotations:
+          summary: "Railora instance readiness probe is degraded"
+          description: "Railora service is not reporting healthy status or metrics are absent for >2 minutes."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#readiness-down"
+
+  - name: railora-http-performance
+    rules:
+      # Alert 3: HTTP 5xx Error Rate Spike
+      - alert: Http5xxSpike
+        expr: sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          service: railora
+        annotations:
+          summary: "HTTP 5xx server error rate is elevated (> 0.5 req/s)"
+          description: "Railora is responding with HTTP 5xx errors at {{ $value | printf \"%.2f\" }} req/s over the last 5 minutes."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#http-5xx-spike"
+
+      # Alert 4: High HTTP Latency (p95 > 2s)
+      - alert: HighP95Latency
+        expr: histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le)) > 2
+        for: 3m
+        labels:
+          severity: warning
+          service: railora
+        annotations:
+          summary: "HTTP p95 latency exceeds 2 seconds"
+          description: "95th percentile HTTP response latency is {{ $value | printf \"%.2f\" }}s over the last 5 minutes."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#high-latency"
+
+  - name: railora-database-connections
+    rules:
+      # Alert 5: HikariCP Connection Pool Saturation
+      - alert: HikariPoolSaturation
+        expr: (hikaricp_connections_active{pool="RailoraHikariPool"} / (hikaricp_connections_max{pool="RailoraHikariPool"} > 0)) > 0.8
+        for: 3m
+        labels:
+          severity: warning
+          service: railora
+        annotations:
+          summary: "HikariCP database connection pool is > 80% saturated"
+          description: "Active connections ratio is {{ $value | printf \"%.1f\" }}% of pool maximum."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#hikaricp-saturation"
+
+      # Alert 6: HikariCP Connection Timeouts
+      - alert: HikariConnectionTimeouts
+        expr: sum(increase(hikaricp_connections_timeout_total{pool="RailoraHikariPool"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: railora
+        annotations:
+          summary: "HikariCP connection timeouts detected"
+          description: "Database connection acquisition timeouts detected in pool 'RailoraHikariPool' ({{ $value }} timeouts in 5m)."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#hikaricp-timeout"
+
+  - name: railora-transactional-outbox
+    rules:
+      # Alert 7: Poison Pill / DEAD Outbox Events
+      - alert: OutboxDeadEvents
+        expr: railora_outbox_events{status="DEAD"} > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: railora
+        annotations:
+          summary: "DEAD events present in Transactional Outbox"
+          description: "Found {{ $value }} DEAD outbox events. Manual triage required for event delivery failure."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#outbox-dead-events"
+
+      # Alert 8: Sustained Outbox Backlog
+      - alert: OutboxBacklogSustained
+        expr: railora_outbox_events{status="PENDING"} > 100
+        for: 10m
+        labels:
+          severity: warning
+          service: railora
+        annotations:
+          summary: "Transactional Outbox backlog exceeds 100 pending events"
+          description: "Transactional outbox has had {{ $value }} PENDING events for >10 minutes. Check publisher relay and Kafka broker connectivity."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#outbox-backlog"
+
+  - name: railora-system-resources
+    rules:
+      # Alert 9: JVM Heap Memory Pressure
+      - alert: JvmHeapPressure
+        expr: (jvm_memory_used_bytes{area="heap"} / (jvm_memory_max_bytes{area="heap"} > 0)) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          service: railora
+        annotations:
+          summary: "JVM Heap usage is sustained above 85%"
+          description: "JVM Heap usage is currently {{ $value | printf \"%.1f\" }}% of allocated max heap."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#jvm-heap-pressure"
+
+  - name: railora-business-operations
+    rules:
+      # Alert 10: Payment Failure Spike
+      - alert: PaymentFailureSpike
+        expr: sum(rate(railora_payment_attempts_total{outcome="failed"}[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: railora
+        annotations:
+          summary: "Elevated payment failure rate detected"
+          description: "Payment failure rate is {{ $value | printf \"%.2f\" }} failures/s over 5 minutes."
+          runbook_url: "https://github.com/yograj/railway_booking/wiki/runbooks#payment-failure-spike"
