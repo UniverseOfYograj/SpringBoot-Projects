@@ -7,12 +7,14 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "payment_transactions",
-        uniqueConstraints = {
-                @UniqueConstraint(name = "uk_payment_booking_idempotency", columnNames = {"booking_ref", "idempotency_key"})
-        },
         indexes = {
                 @Index(name = "idx_payment_booking_ref", columnList = "booking_ref"),
                 @Index(name = "idx_payment_transaction_ref", columnList = "transaction_ref")
+        },
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_payment_booking_idempotency", columnNames = {"booking_ref", "idempotency_key"}),
+                @UniqueConstraint(name = "uk_payment_gateway_order_id", columnNames = {"gateway_order_id"}),
+                @UniqueConstraint(name = "uk_payment_gateway_payment_id", columnNames = {"gateway_payment_id"})
         })
 public class PaymentTransaction {
 
@@ -48,6 +50,15 @@ public class PaymentTransaction {
 
     @Column(name = "simulate_failure")
     private Boolean simulateFailure;
+
+    @Column(name = "gateway_order_id", length = 64)
+    private String gatewayOrderId;
+
+    @Column(name = "gateway_order_receipt", length = 40)
+    private String gatewayOrderReceipt;
+
+    @Column(name = "gateway_payment_id", length = 64)
+    private String gatewayPaymentId;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -133,6 +144,30 @@ public class PaymentTransaction {
 
     public void setSimulateFailure(Boolean simulateFailure) {
         this.simulateFailure = simulateFailure;
+    }
+
+    public String getGatewayOrderId() {
+        return gatewayOrderId;
+    }
+
+    public void setGatewayOrderId(String gatewayOrderId) {
+        this.gatewayOrderId = gatewayOrderId;
+    }
+
+    public String getGatewayOrderReceipt() {
+        return gatewayOrderReceipt;
+    }
+
+    public void setGatewayOrderReceipt(String gatewayOrderReceipt) {
+        this.gatewayOrderReceipt = gatewayOrderReceipt;
+    }
+
+    public String getGatewayPaymentId() {
+        return gatewayPaymentId;
+    }
+
+    public void setGatewayPaymentId(String gatewayPaymentId) {
+        this.gatewayPaymentId = gatewayPaymentId;
     }
 
     public LocalDateTime getCreatedAt() {

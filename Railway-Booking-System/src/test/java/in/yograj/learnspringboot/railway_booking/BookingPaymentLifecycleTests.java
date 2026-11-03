@@ -39,6 +39,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -225,6 +226,18 @@ class BookingPaymentLifecycleTests {
         assertEquals("MOCK_UPI", txn.getPaymentMethod());
         assertEquals(new BigDecimal("500.00"), txn.getAmount());
         assertNull(txn.getFailureReason());
+    }
+
+    @Test
+    void createBookingPersistsConfiguredServerFare() {
+        User user = createUser("fare-persist");
+        JourneySeatInventory seatInv = inventories.get(0);
+
+        BookingResponseDTO created = createPendingBookingForSeat(seatInv, user, 10);
+
+        assertEquals(new BigDecimal("500.00"), created.amount());
+        Booking persisted = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
+        assertEquals(new BigDecimal("500.00"), persisted.getAmount());
     }
 
     @Test
@@ -599,19 +612,23 @@ class BookingPaymentLifecycleTests {
 
     @Test
     void paymentAmount_isDerivedServerSideAndNeverTrustsClient() {
+        assertTrue(Arrays.stream(CreateBookingRequestDTO.class.getRecordComponents())
+                .noneMatch(component -> "amount".equals(component.getName())));
+
         User user = createUser("fare-check");
         JourneySeatInventory seatInv = inventories.get(3);
         BookingResponseDTO created = createPendingBookingForSeat(seatInv, user, 10);
 
-        // Before payment, booking amount was null (no fare model yet)
+        // Fare is fixed on the server at booking creation, before any payment attempt.
         Booking beforePay = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
-        assertNull(beforePay.getAmount());
+        assertEquals(new BigDecimal("500.00"), created.amount());
+        assertEquals(new BigDecimal("500.00"), beforePay.getAmount());
 
         // Process payment
         PaymentResponseDTO response = bookingService.processPayment(
                 created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", null, false), user.getUsername());
 
-        // Server-side deterministic default mock fare was applied
+        // Payment uses the persisted fare rather than an amount provided by the caller.
         assertEquals(new BigDecimal("500.00"), response.amount());
 
         Booking afterPay = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();

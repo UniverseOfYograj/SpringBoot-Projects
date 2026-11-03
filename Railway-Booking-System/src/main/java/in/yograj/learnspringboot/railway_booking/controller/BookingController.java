@@ -6,7 +6,13 @@ import in.yograj.learnspringboot.railway_booking.dto.CreateBookingRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PageResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PaymentRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PaymentResponseDTO;
+import in.yograj.learnspringboot.railway_booking.dto.RazorpayOrderResponseDTO;
+import in.yograj.learnspringboot.railway_booking.dto.RazorpayPaymentStatusDTO;
+import in.yograj.learnspringboot.railway_booking.dto.RazorpayVerifyRequestDTO;
+import in.yograj.learnspringboot.railway_booking.dto.SimulatedPaymentRequestDTO;
+import in.yograj.learnspringboot.railway_booking.dto.SimulatedPaymentSummaryDTO;
 import in.yograj.learnspringboot.railway_booking.service.BookingService;
+import in.yograj.learnspringboot.railway_booking.service.RazorpayPaymentService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,9 +33,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class BookingController {
 
     private final BookingService bookingService;
+    private final RazorpayPaymentService razorpayPaymentService;
 
-    public BookingController(BookingService bookingService) {
+    public BookingController(BookingService bookingService, RazorpayPaymentService razorpayPaymentService) {
         this.bookingService = bookingService;
+        this.razorpayPaymentService = razorpayPaymentService;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -50,6 +58,66 @@ public class BookingController {
             Authentication authentication) {
         return ResponseEntity.ok(bookingService.processPayment(
                 bookingRef, request, authentication.getName()));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{bookingRef}/simulated")
+    public ResponseEntity<SimulatedPaymentSummaryDTO> getSimulatedPaymentSummary(
+            @PathVariable String bookingRef,
+            Authentication authentication) {
+        return ResponseEntity.ok(bookingService.getSimulatedPaymentSummary(
+                bookingRef, authentication.getName()));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/{bookingRef}/simulated/initiate")
+    public ResponseEntity<SimulatedPaymentSummaryDTO> initiateSimulatedPayment(
+            @PathVariable String bookingRef,
+            Authentication authentication) {
+        return ResponseEntity.ok(bookingService.initiateSimulatedPayment(
+                bookingRef, authentication.getName()));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/{bookingRef}/simulated/success")
+    public ResponseEntity<PaymentResponseDTO> simulatePaymentSuccess(
+            @PathVariable String bookingRef,
+            @RequestBody(required = false) SimulatedPaymentRequestDTO request,
+            Authentication authentication) {
+        String idempotencyKey = request != null ? request.idempotencyKey() : null;
+        return ResponseEntity.ok(bookingService.processSimulatedPaymentSuccess(
+                bookingRef, idempotencyKey, authentication.getName()));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping(value = {"/{bookingRef}/simulated/failure", "/{bookingRef}/simulated/fail"})
+    public ResponseEntity<PaymentResponseDTO> simulatePaymentFailure(
+            @PathVariable String bookingRef,
+            @RequestBody(required = false) SimulatedPaymentRequestDTO request,
+            Authentication authentication) {
+        String idempotencyKey = request != null ? request.idempotencyKey() : null;
+        String reason = request != null ? request.reason() : null;
+        return ResponseEntity.ok(bookingService.processSimulatedPaymentFailure(
+                bookingRef, idempotencyKey, reason, authentication.getName()));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/{bookingRef}/razorpay/order")
+    public ResponseEntity<RazorpayOrderResponseDTO> createRazorpayOrder(
+            @PathVariable String bookingRef,
+            Authentication authentication) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(razorpayPaymentService.createOrder(bookingRef, authentication.getName()));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/{bookingRef}/razorpay/verify")
+    public ResponseEntity<RazorpayPaymentStatusDTO> verifyRazorpayPayment(
+            @PathVariable String bookingRef,
+            @Valid @RequestBody RazorpayVerifyRequestDTO request,
+            Authentication authentication) {
+        return ResponseEntity.ok(razorpayPaymentService.verifyCheckout(
+                bookingRef, authentication.getName(), request));
     }
 
     @PreAuthorize("isAuthenticated()")

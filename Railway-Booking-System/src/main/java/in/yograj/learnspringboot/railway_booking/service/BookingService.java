@@ -7,6 +7,8 @@ import in.yograj.learnspringboot.railway_booking.dto.CreateBookingRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PageResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PaymentRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PaymentResponseDTO;
+import in.yograj.learnspringboot.railway_booking.dto.SimulatedPaymentRequestDTO;
+import in.yograj.learnspringboot.railway_booking.dto.SimulatedPaymentSummaryDTO;
 import in.yograj.learnspringboot.railway_booking.entity.*;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
@@ -21,6 +23,7 @@ import in.yograj.learnspringboot.railway_booking.repository.PaymentTransactionRe
 import in.yograj.learnspringboot.railway_booking.repository.SeatAllocationRepository;
 import in.yograj.learnspringboot.railway_booking.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -52,6 +55,8 @@ public class BookingService {
 
     public static final BigDecimal DEFAULT_MOCK_FARE = new BigDecimal("500.00");
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    private static final FareCalculationService DEFAULT_FARE_CALCULATION_SERVICE =
+            new FareCalculationService(DEFAULT_MOCK_FARE);
 
     private final BookingRepository bookingRepository;
     private final JourneySeatInventoryRepository inventoryRepository;
@@ -62,6 +67,36 @@ public class BookingService {
     private final TatkalJourneyPolicy tatkalJourneyPolicy;
     private final TatkalAdmissionPassService tatkalAdmissionPassService;
     private final OutboxEventService outboxEventService;
+    private final FareCalculationService fareCalculationService;
+
+    @Autowired(required = false)
+    private in.yograj.learnspringboot.railway_booking.observability.RailoraMetrics railoraMetrics;
+
+    public void setRailoraMetrics(in.yograj.learnspringboot.railway_booking.observability.RailoraMetrics railoraMetrics) {
+        this.railoraMetrics = railoraMetrics;
+    }
+
+    @Value("${railway.payment.mock-enabled:true}")
+    private boolean mockPaymentEnabled = true;
+
+    @Value("${railway.payment.simulated-enabled:false}")
+    private boolean simulatedPaymentEnabled = false;
+
+    public void setSimulatedPaymentEnabled(boolean simulatedPaymentEnabled) {
+        this.simulatedPaymentEnabled = simulatedPaymentEnabled;
+    }
+
+    public boolean isSimulatedPaymentEnabled() {
+        return this.simulatedPaymentEnabled;
+    }
+
+    public void setMockPaymentEnabled(boolean mockPaymentEnabled) {
+        this.mockPaymentEnabled = mockPaymentEnabled;
+    }
+
+    public boolean isMockPaymentEnabled() {
+        return this.mockPaymentEnabled;
+    }
 
     public BookingService(BookingRepository bookingRepository,
                           JourneySeatInventoryRepository inventoryRepository,
@@ -73,7 +108,21 @@ public class BookingService {
                           TatkalAdmissionPassService tatkalAdmissionPassService) {
         this(bookingRepository, inventoryRepository, allocationRepository,
                 seatInventoryService, userRepository, paymentTransactionRepository,
-                tatkalJourneyPolicy, tatkalAdmissionPassService, null);
+                tatkalJourneyPolicy, tatkalAdmissionPassService, null, DEFAULT_FARE_CALCULATION_SERVICE);
+    }
+
+    public BookingService(BookingRepository bookingRepository,
+                          JourneySeatInventoryRepository inventoryRepository,
+                          SeatAllocationRepository allocationRepository,
+                          SeatInventoryService seatInventoryService,
+                          UserRepository userRepository,
+                          PaymentTransactionRepository paymentTransactionRepository,
+                          TatkalJourneyPolicy tatkalJourneyPolicy,
+                          TatkalAdmissionPassService tatkalAdmissionPassService,
+                          OutboxEventService outboxEventService) {
+        this(bookingRepository, inventoryRepository, allocationRepository, seatInventoryService,
+                userRepository, paymentTransactionRepository, tatkalJourneyPolicy,
+                tatkalAdmissionPassService, outboxEventService, DEFAULT_FARE_CALCULATION_SERVICE);
     }
 
     @Autowired
@@ -85,7 +134,8 @@ public class BookingService {
                           PaymentTransactionRepository paymentTransactionRepository,
                           TatkalJourneyPolicy tatkalJourneyPolicy,
                           TatkalAdmissionPassService tatkalAdmissionPassService,
-                          OutboxEventService outboxEventService) {
+                          OutboxEventService outboxEventService,
+                          FareCalculationService fareCalculationService) {
         this.bookingRepository = bookingRepository;
         this.inventoryRepository = inventoryRepository;
         this.allocationRepository = allocationRepository;
@@ -95,6 +145,7 @@ public class BookingService {
         this.tatkalJourneyPolicy = tatkalJourneyPolicy;
         this.tatkalAdmissionPassService = tatkalAdmissionPassService;
         this.outboxEventService = outboxEventService;
+        this.fareCalculationService = fareCalculationService;
     }
 
     @Transactional
@@ -105,7 +156,8 @@ public class BookingService {
     @Transactional
     public BookingResponseDTO createBooking(CreateBookingRequestDTO request, String username,
                                              String admissionPass) {
-        User user = userRepository.findByUsername(username)
+        try {
+            User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
 
         // Parent run-seat row lock same seat ke holds aur booking decisions ko serialize karta hai.
@@ -172,13 +224,31 @@ public class BookingService {
         booking.setPnr(generateUniquePnr());
         booking.setBookingStatus(PENDING_PAYMENT);
         booking.setPaymentStatus("PENDING");
-        // Fare abhi model nahi hua, isliye amount client se nahi leta aur fake fare bhi set nahi karta.
-        booking.setAmount(null);
+        booking.setAmount(fareCalculationService.calculateFare());
         booking.setCreatedAt(now);
 
         Booking savedBooking = bookingRepository.save(booking);
+        if (railoraMetrics != null) {
+            railoraMetrics.recordBookingCreated(admissionPass != null ? "tatkal" : "standard", "success", "none");
+        }
         // Payment/confirmation tak allocation HOLD hi rehti hai; yahan BOOKED transition nahi hota.
         return toResponse(savedBooking);
+        } catch (AccessDeniedException ex) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordBookingCreated(admissionPass != null ? "tatkal" : "standard", "failure", "unauthorized");
+            }
+            throw ex;
+        } catch (BadRequestException | IllegalStateException | in.yograj.learnspringboot.railway_booking.exception.InvalidAdmissionPassException ex) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordBookingCreated(admissionPass != null ? "tatkal" : "standard", "failure", "invalid_request");
+            }
+            throw ex;
+        } catch (ResourceNotFoundException ex) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordBookingCreated(admissionPass != null ? "tatkal" : "standard", "failure", "not_found");
+            }
+            throw ex;
+        }
     }
 
     @Transactional(noRollbackFor = SeatHoldExpiredException.class)
@@ -190,6 +260,27 @@ public class BookingService {
         PaymentRequestDTO safeRequest = request != null
                 ? request
                 : new PaymentRequestDTO("MOCK_UPI", null, false);
+        String method = safeRequest.paymentMethod() != null ? safeRequest.paymentMethod().toUpperCase() : "MOCK_UPI";
+        if ("SIMULATED".equals(method)) {
+            if (!simulatedPaymentEnabled) {
+                throw new IllegalStateException("Simulated payments are disabled");
+            }
+            String key = safeRequest.idempotencyKey();
+            if (key == null || key.isBlank()) {
+                throw new BadRequestException("An idempotency key is required for simulated payments");
+            }
+            if (Boolean.TRUE.equals(safeRequest.simulateFailure())) {
+                return processSimulatedPaymentFailure(bookingRef, key, "Simulated payment failure", username);
+            } else {
+                return processSimulatedPaymentSuccess(bookingRef, key, username);
+            }
+        }
+        if (!method.startsWith("MOCK_")) {
+            throw new BadRequestException("Only mock payment methods are supported by this endpoint");
+        }
+        if (!mockPaymentEnabled) {
+            throw new IllegalStateException("Mock payments are disabled");
+        }
 
         // 1. Lock the booking row pessimistically to serialize concurrent payments on this booking
         Booking booking = bookingRepository.findByBookingRefForUpdate(bookingRef)
@@ -225,6 +316,10 @@ public class BookingService {
                             + "' was previously used with different request parameters");
                 }
 
+                if (railoraMetrics != null) {
+                    railoraMetrics.recordPaymentAttempt("MOCK_UPI", "idempotent_replay", "none");
+                }
+
                 return new PaymentResponseDTO(
                         txn.getTransactionRef(),
                         booking.getBookingRef(),
@@ -241,11 +336,17 @@ public class BookingService {
 
         // 5. Duplicate payment check: booking is already confirmed
         if (CONFIRMED.equalsIgnoreCase(booking.getBookingStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("MOCK_UPI", "failure", "invalid_state");
+            }
             throw new IllegalStateException("Booking has already been confirmed");
         }
 
         if ("CANCELLED".equalsIgnoreCase(booking.getBookingStatus())
                 || EXPIRED.equalsIgnoreCase(booking.getBookingStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("MOCK_UPI", "failure", "invalid_state");
+            }
             throw new IllegalStateException("Booking cannot be paid in status: " + booking.getBookingStatus());
         }
 
@@ -291,6 +392,10 @@ public class BookingService {
             expiredTxn.setCreatedAt(now);
             paymentTransactionRepository.save(expiredTxn);
 
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("MOCK_UPI", "failure", "expired_hold");
+            }
+
             throw new SeatHoldExpiredException("Seat hold has expired. Booking can no longer be confirmed.");
         }
 
@@ -330,6 +435,10 @@ public class BookingService {
                                 now
                         )
                 );
+            }
+
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("MOCK_UPI", "failure", "simulation");
             }
 
             return new PaymentResponseDTO(
@@ -389,6 +498,10 @@ public class BookingService {
             );
         }
 
+        if (railoraMetrics != null) {
+            railoraMetrics.recordPaymentAttempt("MOCK_UPI", "success", "none");
+        }
+
         return new PaymentResponseDTO(
                 txnRef,
                 booking.getBookingRef(),
@@ -416,18 +529,30 @@ public class BookingService {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
         if (!isAdmin(user) && !booking.getUser().getUserId().equals(user.getUserId())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordBookingCancellation("failure", "unauthorized");
+            }
             throw new AccessDeniedException("You are not authorized to cancel this booking");
         }
 
         // 3. Status eligibility checks
         if (CANCELLED.equalsIgnoreCase(booking.getBookingStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordBookingCancellation("failure", "already_cancelled");
+            }
             throw new IllegalStateException("Booking has already been cancelled");
         }
         if (EXPIRED.equalsIgnoreCase(booking.getBookingStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordBookingCancellation("failure", "invalid_status");
+            }
             throw new IllegalStateException("Booking cannot be cancelled in status: " + booking.getBookingStatus());
         }
         if (!CONFIRMED.equalsIgnoreCase(booking.getBookingStatus())
                 && !PENDING_PAYMENT.equalsIgnoreCase(booking.getBookingStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordBookingCancellation("failure", "invalid_status");
+            }
             throw new IllegalStateException("Booking cannot be cancelled in status: " + booking.getBookingStatus());
         }
 
@@ -507,37 +632,47 @@ public class BookingService {
         if ("PENDING".equalsIgnoreCase(booking.getPaymentStatus())) {
             booking.setPaymentStatus(CANCELLED);
         } else if (STATUS_SUCCESS.equalsIgnoreCase(booking.getPaymentStatus())) {
-            // Full mock refund: in absence of a documented fee policy, the verified paid amount is refunded in the mock ledger.
-            booking.setPaymentStatus(STATUS_REFUNDED);
+            boolean razorpayPayment = originalPaymentTxn != null
+                    && "RAZORPAY".equalsIgnoreCase(originalPaymentTxn.getPaymentMethod());
+            if (razorpayPayment) {
+                booking.setPaymentStatus("REFUND_REQUIRED");
+            } else {
+                // Full mock refund: in absence of a documented fee policy, the verified paid amount is refunded in the mock ledger.
+                booking.setPaymentStatus(STATUS_REFUNDED);
 
-            // Record the mock refund transaction idempotently
-            String refundIdempotencyKey = "REFUND-" + booking.getBookingRef();
-            Optional<PaymentTransaction> existingRefund = paymentTransactionRepository
-                    .findByBookingRefAndIdempotencyKey(booking.getBookingRef(), refundIdempotencyKey);
+                // Record the mock refund transaction idempotently
+                String refundIdempotencyKey = "REFUND-" + booking.getBookingRef();
+                Optional<PaymentTransaction> existingRefund = paymentTransactionRepository
+                        .findByBookingRefAndIdempotencyKey(booking.getBookingRef(), refundIdempotencyKey);
 
-            if (existingRefund.isEmpty()) {
-                String paymentMethod = originalPaymentTxn.getPaymentMethod() != null
-                        && !originalPaymentTxn.getPaymentMethod().isBlank()
-                        ? originalPaymentTxn.getPaymentMethod()
-                        : "MOCK_UPI";
+                if (existingRefund.isEmpty()) {
+                    String paymentMethod = originalPaymentTxn.getPaymentMethod() != null
+                            && !originalPaymentTxn.getPaymentMethod().isBlank()
+                            ? originalPaymentTxn.getPaymentMethod()
+                            : "MOCK_UPI";
 
-                PaymentTransaction refundTxn = new PaymentTransaction();
-                refundTxn.setBooking(booking);
-                refundTxn.setBookingRef(booking.getBookingRef());
-                refundTxn.setTransactionRef("TXN-REFUND-" + UUID.randomUUID().toString().replace("-", "").toUpperCase());
-                refundTxn.setPaymentMethod(paymentMethod);
-                refundTxn.setAmount(verifiedRefundAmount);
-                refundTxn.setStatus(STATUS_REFUNDED);
-                refundTxn.setFailureReason(null);
-                refundTxn.setIdempotencyKey(refundIdempotencyKey);
-                refundTxn.setSimulateFailure(false);
-                refundTxn.setCreatedAt(now);
-                paymentTransactionRepository.save(refundTxn);
+                    PaymentTransaction refundTxn = new PaymentTransaction();
+                    refundTxn.setBooking(booking);
+                    refundTxn.setBookingRef(booking.getBookingRef());
+                    refundTxn.setTransactionRef("TXN-REFUND-" + UUID.randomUUID().toString().replace("-", "").toUpperCase());
+                    refundTxn.setPaymentMethod(paymentMethod);
+                    refundTxn.setAmount(verifiedRefundAmount);
+                    refundTxn.setStatus(STATUS_REFUNDED);
+                    refundTxn.setFailureReason(null);
+                    refundTxn.setIdempotencyKey(refundIdempotencyKey);
+                    refundTxn.setSimulateFailure(false);
+                    refundTxn.setCreatedAt(now);
+                    paymentTransactionRepository.save(refundTxn);
+                }
             }
         }
         bookingRepository.save(booking);
 
         if (outboxEventService != null) {
+            BigDecimal refundAmountForEvent = originalPaymentTxn != null
+                    && "RAZORPAY".equalsIgnoreCase(originalPaymentTxn.getPaymentMethod())
+                    ? BigDecimal.ZERO
+                    : verifiedRefundAmount != null ? verifiedRefundAmount : BigDecimal.ZERO;
             outboxEventService.stageEvent(
                     "BOOKING",
                     booking.getBookingRef(),
@@ -550,10 +685,14 @@ public class BookingService {
                             booking.getUser().getUsername(),
                             CANCELLED,
                             booking.getPaymentStatus(),
-                            verifiedRefundAmount != null ? verifiedRefundAmount : BigDecimal.ZERO,
+                            refundAmountForEvent,
                             now
                     )
             );
+        }
+
+        if (railoraMetrics != null) {
+            railoraMetrics.recordBookingCancellation("success", "none");
         }
 
         return toDetailResponse(booking);
@@ -695,6 +834,491 @@ public class BookingService {
             }
         }
         throw new IllegalStateException("Failed to generate a unique 10-digit PNR after 10 attempts");
+    }
+
+    @Transactional(readOnly = true)
+    public SimulatedPaymentSummaryDTO getSimulatedPaymentSummary(String bookingRef, String username) {
+        if (bookingRef == null || bookingRef.isBlank()) {
+            throw new BadRequestException("Booking reference is required");
+        }
+        if (!simulatedPaymentEnabled) {
+            throw new IllegalStateException("Simulated payments are disabled");
+        }
+
+        Booking booking = bookingRepository.findByBookingRef(bookingRef.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found for reference: " + bookingRef));
+
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+        if (!isAdmin(user) && !booking.getUser().getUserId().equals(user.getUserId())) {
+            throw new AccessDeniedException("You are not authorized to view payment for this booking");
+        }
+
+        SeatAllocation allocation = booking.getSeatAllocation();
+        LocalDateTime holdExpiresAt = allocation != null ? allocation.getHoldExpiresAt() : null;
+
+        return toSimulatedSummary(booking, holdExpiresAt);
+    }
+
+    @Transactional
+    public SimulatedPaymentSummaryDTO initiateSimulatedPayment(String bookingRef, String username) {
+        if (bookingRef == null || bookingRef.isBlank()) {
+            throw new BadRequestException("Booking reference is required");
+        }
+        if (!simulatedPaymentEnabled) {
+            throw new IllegalStateException("Simulated payments are disabled");
+        }
+
+        Booking booking = bookingRepository.findByBookingRefForUpdate(bookingRef.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found for reference: " + bookingRef));
+
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+        if (!isAdmin(user) && !booking.getUser().getUserId().equals(user.getUserId())) {
+            throw new AccessDeniedException("You are not authorized to pay for this booking");
+        }
+
+        if (CONFIRMED.equalsIgnoreCase(booking.getBookingStatus())) {
+            throw new IllegalStateException("Booking has already been confirmed");
+        }
+        if (CANCELLED.equalsIgnoreCase(booking.getBookingStatus())
+                || EXPIRED.equalsIgnoreCase(booking.getBookingStatus())) {
+            throw new IllegalStateException("Booking cannot be paid in status: " + booking.getBookingStatus());
+        }
+
+        if (booking.getSeatAllocation() == null) {
+            throw new IllegalStateException("Booking does not have an associated seat allocation");
+        }
+        SeatAllocation allocation = allocationRepository.findById(
+                booking.getSeatAllocation().getSeatAllocationId()
+        ).orElseThrow(() -> new IllegalStateException("Associated seat allocation not found"));
+
+        LocalDateTime now = LocalDateTime.now();
+        if (allocation.getHoldExpiresAt() != null && !allocation.getHoldExpiresAt().isAfter(now)) {
+            allocation.setStatus(EXPIRED);
+            allocation.setUpdatedAt(now);
+            allocationRepository.save(allocation);
+
+            booking.setBookingStatus(EXPIRED);
+            booking.setPaymentStatus(EXPIRED);
+            bookingRepository.save(booking);
+
+            throw new SeatHoldExpiredException("Seat hold has expired. Booking can no longer be confirmed.");
+        }
+
+        if (!HOLD.equalsIgnoreCase(allocation.getStatus())) {
+            throw new IllegalStateException("Seat allocation is not on hold (current status: " + allocation.getStatus() + ")");
+        }
+
+        if (booking.getAmount() == null || booking.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            booking.setAmount(DEFAULT_MOCK_FARE);
+            bookingRepository.save(booking);
+        }
+
+        return toSimulatedSummary(booking, allocation.getHoldExpiresAt());
+    }
+
+    @Transactional(noRollbackFor = SeatHoldExpiredException.class)
+    public PaymentResponseDTO processSimulatedPaymentSuccess(String bookingRef, String idempotencyKey, String username) {
+        if (bookingRef == null || bookingRef.isBlank()) {
+            throw new BadRequestException("Booking reference is required");
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new BadRequestException("An idempotency key is required for simulated payments");
+        }
+        if (!simulatedPaymentEnabled) {
+            throw new IllegalStateException("Simulated payments are disabled");
+        }
+
+        String trimmedKey = idempotencyKey.trim();
+
+        // 1. Lock booking row pessimistically
+        Booking booking = bookingRepository.findByBookingRefForUpdate(bookingRef.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found for reference: " + bookingRef));
+
+        // 2. Ownership verification
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+        if (!isAdmin(user) && !booking.getUser().getUserId().equals(user.getUserId())) {
+            throw new AccessDeniedException("You are not authorized to pay for this booking");
+        }
+
+        // 3. Idempotency check
+        Optional<PaymentTransaction> existingTxn = paymentTransactionRepository
+                .findByBookingRefAndIdempotencyKey(booking.getBookingRef(), trimmedKey);
+        if (existingTxn.isPresent()) {
+            PaymentTransaction txn = existingTxn.get();
+            if (STATUS_SUCCESS.equalsIgnoreCase(txn.getStatus())) {
+                if (railoraMetrics != null) {
+                    railoraMetrics.recordPaymentAttempt("SIMULATED", "idempotent_replay", "none");
+                }
+
+                return new PaymentResponseDTO(
+                        txn.getTransactionRef(),
+                        booking.getBookingRef(),
+                        booking.getBookingId(),
+                        txn.getAmount(),
+                        txn.getStatus(),
+                        booking.getBookingStatus(),
+                        txn.getPaymentMethod(),
+                        "Idempotent response for transaction " + txn.getTransactionRef(),
+                        txn.getCreatedAt()
+                );
+            } else {
+                throw new IllegalStateException("Idempotency key '" + trimmedKey
+                        + "' was previously used for a failed payment attempt. A new idempotency key is required to retry.");
+            }
+        }
+
+        // 4. Duplicate payment check: booking is already confirmed
+        if (CONFIRMED.equalsIgnoreCase(booking.getBookingStatus())
+                || STATUS_SUCCESS.equalsIgnoreCase(booking.getPaymentStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("SIMULATED", "failure", "invalid_state");
+            }
+            throw new IllegalStateException("Booking has already been confirmed");
+        }
+
+        if (CANCELLED.equalsIgnoreCase(booking.getBookingStatus())
+                || EXPIRED.equalsIgnoreCase(booking.getBookingStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("SIMULATED", "failure", "invalid_state");
+            }
+            throw new IllegalStateException("Booking cannot be paid in status: " + booking.getBookingStatus());
+        }
+
+        boolean alreadyPaid = paymentTransactionRepository.findByBookingRef(booking.getBookingRef()).stream()
+                .anyMatch(t -> STATUS_SUCCESS.equalsIgnoreCase(t.getStatus()));
+        if (alreadyPaid) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("SIMULATED", "failure", "invalid_state");
+            }
+            throw new IllegalStateException("Booking has already been confirmed");
+        }
+
+        // 5. Parent inventory lock
+        inventoryRepository.findByJourneyAndSeatForUpdate(
+                booking.getJourney().getJourneyId(), booking.getSeat().getSeatId())
+                .orElseThrow(() -> new ResourceNotFoundException("Seat inventory not found"));
+
+        // 6. Seat allocation verification
+        if (booking.getSeatAllocation() == null) {
+            throw new IllegalStateException("Booking does not have an associated seat allocation");
+        }
+        SeatAllocation allocation = allocationRepository.findById(
+                booking.getSeatAllocation().getSeatAllocationId()
+        ).orElseThrow(() -> new IllegalStateException("Associated seat allocation not found"));
+
+        LocalDateTime now = LocalDateTime.now();
+        String txnRef = "SIM-" + UUID.randomUUID().toString().replace("-", "").toUpperCase();
+
+        BigDecimal amountToCharge = booking.getAmount() != null
+                ? booking.getAmount()
+                : DEFAULT_MOCK_FARE;
+        booking.setAmount(amountToCharge);
+
+        // 7. Check hold expiration
+        if (allocation.getHoldExpiresAt() != null && !allocation.getHoldExpiresAt().isAfter(now)) {
+            allocation.setStatus(EXPIRED);
+            allocation.setUpdatedAt(now);
+            allocationRepository.save(allocation);
+
+            booking.setBookingStatus(EXPIRED);
+            booking.setPaymentStatus(EXPIRED);
+            bookingRepository.save(booking);
+
+            PaymentTransaction expiredTxn = new PaymentTransaction();
+            expiredTxn.setBooking(booking);
+            expiredTxn.setBookingRef(booking.getBookingRef());
+            expiredTxn.setTransactionRef(txnRef);
+            expiredTxn.setPaymentMethod("SIMULATED");
+            expiredTxn.setAmount(amountToCharge);
+            expiredTxn.setStatus(STATUS_FAILED);
+            expiredTxn.setFailureReason("Seat hold has expired");
+            expiredTxn.setIdempotencyKey(trimmedKey);
+            expiredTxn.setSimulateFailure(false);
+            expiredTxn.setCreatedAt(now);
+            paymentTransactionRepository.save(expiredTxn);
+
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("SIMULATED", "failure", "expired_hold");
+            }
+
+            throw new SeatHoldExpiredException("Seat hold has expired. Booking can no longer be confirmed.");
+        }
+
+        if (!HOLD.equalsIgnoreCase(allocation.getStatus())) {
+            throw new IllegalStateException("Seat allocation is not on hold (current status: " + allocation.getStatus() + ")");
+        }
+
+        // 8. Success: Persist PaymentTransaction
+        PaymentTransaction successTxn = new PaymentTransaction();
+        successTxn.setBooking(booking);
+        successTxn.setBookingRef(booking.getBookingRef());
+        successTxn.setTransactionRef(txnRef);
+        successTxn.setPaymentMethod("SIMULATED");
+        successTxn.setAmount(amountToCharge);
+        successTxn.setStatus(STATUS_SUCCESS);
+        successTxn.setFailureReason(null);
+        successTxn.setIdempotencyKey(trimmedKey);
+        successTxn.setSimulateFailure(false);
+        successTxn.setCreatedAt(now);
+        paymentTransactionRepository.save(successTxn);
+
+        // 9. State Transitions: Booking -> CONFIRMED, Allocation -> BOOKED
+        booking.setBookingStatus(CONFIRMED);
+        booking.setPaymentStatus(STATUS_SUCCESS);
+        bookingRepository.save(booking);
+
+        allocation.setStatus(BOOKED);
+        allocation.setUpdatedAt(now);
+        allocationRepository.save(allocation);
+
+        if (outboxEventService != null) {
+            outboxEventService.stageEvent(
+                    "BOOKING",
+                    booking.getBookingRef(),
+                    "BOOKING_CONFIRMED",
+                    new BookingConfirmedEvent(
+                            booking.getBookingRef(),
+                            booking.getPnr() != null ? booking.getPnr() : "",
+                            booking.getBookingId(),
+                            booking.getUser().getUserId(),
+                            booking.getUser().getUsername(),
+                            booking.getJourney().getJourneyId(),
+                            amountToCharge,
+                            "SIMULATED",
+                            successTxn.getTransactionRef(),
+                            CONFIRMED,
+                            now
+                    )
+            );
+        }
+
+        if (railoraMetrics != null) {
+            railoraMetrics.recordPaymentAttempt("SIMULATED", "success", "none");
+        }
+
+        return new PaymentResponseDTO(
+                txnRef,
+                booking.getBookingRef(),
+                booking.getBookingId(),
+                amountToCharge,
+                STATUS_SUCCESS,
+                CONFIRMED,
+                "SIMULATED",
+                "Simulated payment successful and booking confirmed",
+                now
+        );
+    }
+
+    @Transactional(noRollbackFor = SeatHoldExpiredException.class)
+    public PaymentResponseDTO processSimulatedPaymentFailure(String bookingRef, String idempotencyKey, String reason, String username) {
+        if (bookingRef == null || bookingRef.isBlank()) {
+            throw new BadRequestException("Booking reference is required");
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new BadRequestException("An idempotency key is required for simulated payments");
+        }
+        if (!simulatedPaymentEnabled) {
+            throw new IllegalStateException("Simulated payments are disabled");
+        }
+
+        String trimmedKey = idempotencyKey.trim();
+
+        // 1. Lock booking row pessimistically
+        Booking booking = bookingRepository.findByBookingRefForUpdate(bookingRef.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found for reference: " + bookingRef));
+
+        // 2. Ownership verification
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
+        if (!isAdmin(user) && !booking.getUser().getUserId().equals(user.getUserId())) {
+            throw new AccessDeniedException("You are not authorized to pay for this booking");
+        }
+
+        // 3. Idempotency check
+        Optional<PaymentTransaction> existingTxn = paymentTransactionRepository
+                .findByBookingRefAndIdempotencyKey(booking.getBookingRef(), trimmedKey);
+        if (existingTxn.isPresent()) {
+            PaymentTransaction txn = existingTxn.get();
+            if (STATUS_FAILED.equalsIgnoreCase(txn.getStatus())) {
+                if (railoraMetrics != null) {
+                    railoraMetrics.recordPaymentAttempt("SIMULATED", "idempotent_replay", "none");
+                }
+
+                return new PaymentResponseDTO(
+                        txn.getTransactionRef(),
+                        booking.getBookingRef(),
+                        booking.getBookingId(),
+                        txn.getAmount(),
+                        txn.getStatus(),
+                        booking.getBookingStatus(),
+                        txn.getPaymentMethod(),
+                        "Idempotent response for transaction " + txn.getTransactionRef(),
+                        txn.getCreatedAt()
+                );
+            } else {
+                throw new IllegalStateException("Idempotency key '" + trimmedKey
+                        + "' was previously used for a successful payment attempt.");
+            }
+        }
+
+        // 4. Duplicate payment check
+        if (CONFIRMED.equalsIgnoreCase(booking.getBookingStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("SIMULATED", "failure", "invalid_state");
+            }
+            throw new IllegalStateException("Booking has already been confirmed");
+        }
+        if (CANCELLED.equalsIgnoreCase(booking.getBookingStatus())
+                || EXPIRED.equalsIgnoreCase(booking.getBookingStatus())) {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("SIMULATED", "failure", "invalid_state");
+            }
+            throw new IllegalStateException("Booking cannot be paid in status: " + booking.getBookingStatus());
+        }
+
+        // 5. Parent inventory lock
+        inventoryRepository.findByJourneyAndSeatForUpdate(
+                booking.getJourney().getJourneyId(), booking.getSeat().getSeatId())
+                .orElseThrow(() -> new ResourceNotFoundException("Seat inventory not found"));
+
+        // 6. Seat allocation verification
+        if (booking.getSeatAllocation() == null) {
+            throw new IllegalStateException("Booking does not have an associated seat allocation");
+        }
+        SeatAllocation allocation = allocationRepository.findById(
+                booking.getSeatAllocation().getSeatAllocationId()
+        ).orElseThrow(() -> new IllegalStateException("Associated seat allocation not found"));
+
+        LocalDateTime now = LocalDateTime.now();
+        String txnRef = "SIM-" + UUID.randomUUID().toString().replace("-", "").toUpperCase();
+
+        BigDecimal amountToCharge = booking.getAmount() != null
+                ? booking.getAmount()
+                : DEFAULT_MOCK_FARE;
+        booking.setAmount(amountToCharge);
+
+        // 7. Check hold expiration
+        if (allocation.getHoldExpiresAt() != null && !allocation.getHoldExpiresAt().isAfter(now)) {
+            allocation.setStatus(EXPIRED);
+            allocation.setUpdatedAt(now);
+            allocationRepository.save(allocation);
+
+            booking.setBookingStatus(EXPIRED);
+            booking.setPaymentStatus(EXPIRED);
+            bookingRepository.save(booking);
+
+            PaymentTransaction expiredTxn = new PaymentTransaction();
+            expiredTxn.setBooking(booking);
+            expiredTxn.setBookingRef(booking.getBookingRef());
+            expiredTxn.setTransactionRef(txnRef);
+            expiredTxn.setPaymentMethod("SIMULATED");
+            expiredTxn.setAmount(amountToCharge);
+            expiredTxn.setStatus(STATUS_FAILED);
+            expiredTxn.setFailureReason("Seat hold has expired");
+            expiredTxn.setIdempotencyKey(trimmedKey);
+            expiredTxn.setSimulateFailure(true);
+            expiredTxn.setCreatedAt(now);
+            paymentTransactionRepository.save(expiredTxn);
+
+            if (railoraMetrics != null) {
+                railoraMetrics.recordPaymentAttempt("SIMULATED", "failure", "expired_hold");
+            }
+
+            throw new SeatHoldExpiredException("Seat hold has expired. Booking can no longer be confirmed.");
+        }
+
+        if (!HOLD.equalsIgnoreCase(allocation.getStatus())) {
+            throw new IllegalStateException("Seat allocation is not on hold (current status: " + allocation.getStatus() + ")");
+        }
+
+        // 8. Failure: Persist failed PaymentTransaction
+        String failureReason = (reason != null && !reason.isBlank()) ? reason.trim() : "Simulated payment failure";
+
+        PaymentTransaction failedTxn = new PaymentTransaction();
+        failedTxn.setBooking(booking);
+        failedTxn.setBookingRef(booking.getBookingRef());
+        failedTxn.setTransactionRef(txnRef);
+        failedTxn.setPaymentMethod("SIMULATED");
+        failedTxn.setAmount(amountToCharge);
+        failedTxn.setStatus(STATUS_FAILED);
+        failedTxn.setFailureReason(failureReason);
+        failedTxn.setIdempotencyKey(trimmedKey);
+        failedTxn.setSimulateFailure(true);
+        failedTxn.setCreatedAt(now);
+        paymentTransactionRepository.save(failedTxn);
+
+        // Booking payment status set to FAILED, booking status remains PENDING_PAYMENT for retry
+        booking.setPaymentStatus(STATUS_FAILED);
+        bookingRepository.save(booking);
+
+        if (outboxEventService != null) {
+            outboxEventService.stageEvent(
+                    "PAYMENT",
+                    failedTxn.getTransactionRef(),
+                    "PAYMENT_FAILED",
+                    new PaymentFailedEvent(
+                            booking.getBookingRef(),
+                            failedTxn.getTransactionRef(),
+                            amountToCharge,
+                            "SIMULATED",
+                            failedTxn.getFailureReason(),
+                            now
+                    )
+            );
+        }
+
+        if (railoraMetrics != null) {
+            railoraMetrics.recordPaymentAttempt("SIMULATED", "failure", "simulation");
+        }
+
+        return new PaymentResponseDTO(
+                txnRef,
+                booking.getBookingRef(),
+                booking.getBookingId(),
+                amountToCharge,
+                STATUS_FAILED,
+                booking.getBookingStatus(), // PENDING_PAYMENT
+                "SIMULATED",
+                "Simulated payment failed: " + failureReason,
+                now
+        );
+    }
+
+    private SimulatedPaymentSummaryDTO toSimulatedSummary(Booking booking, LocalDateTime holdExpiresAt) {
+        Journey journey = booking.getJourney();
+        Train train = journey != null ? journey.getTrain() : null;
+        Station fromStation = journey != null ? journey.getFromStation() : null;
+        Station toStation = journey != null ? journey.getToStation() : null;
+        Coach coach = booking.getCoach();
+        Seat seat = booking.getSeat();
+
+        return new SimulatedPaymentSummaryDTO(
+                booking.getBookingRef(),
+                booking.getBookingId(),
+                booking.getPnr(),
+                journey != null ? journey.getJourneyId() : null,
+                train != null ? train.getTrainNumber() : null,
+                train != null ? train.getTrainName() : null,
+                fromStation != null ? fromStation.getStationCode() : null,
+                fromStation != null ? fromStation.getStationName() : null,
+                toStation != null ? toStation.getStationCode() : null,
+                toStation != null ? toStation.getStationName() : null,
+                journey != null ? journey.getJourneyDate() : null,
+                journey != null ? journey.getDepartureTime() : null,
+                journey != null ? journey.getArrivalTime() : null,
+                coach != null ? coach.getCoachNumber() : null,
+                coach != null ? coach.getCoachType() : null,
+                seat != null ? seat.getSeatNumber() : null,
+                seat != null ? seat.getSeatType() : null,
+                booking.getAmount(),
+                booking.getBookingStatus(),
+                booking.getPaymentStatus(),
+                holdExpiresAt,
+                "SIMULATED"
+        );
     }
 
     private boolean isAdmin(User user) {

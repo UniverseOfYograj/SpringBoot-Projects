@@ -3,6 +3,8 @@ package in.yograj.learnspringboot.railway_booking.controller;
 import in.yograj.learnspringboot.railway_booking.dto.BookingDetailResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PaymentRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.PaymentResponseDTO;
+import in.yograj.learnspringboot.railway_booking.dto.SimulatedPaymentRequestDTO;
+import in.yograj.learnspringboot.railway_booking.dto.SimulatedPaymentSummaryDTO;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
 import in.yograj.learnspringboot.railway_booking.integration.githubdata.GitHubRailwayDataImportService;
@@ -292,5 +294,71 @@ class BookingPaymentControllerTests {
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.error").value("Not Found"))
                 .andExpect(jsonPath("$.message").value("Booking not found for reference: RB-UNKNOWN"));
+    }
+
+    @Test
+    @WithMockUser(username = "regular-user", roles = {"USER"})
+    void getSimulatedPaymentSummary_success_returns200() throws Exception {
+        SimulatedPaymentSummaryDTO summary = new SimulatedPaymentSummaryDTO(
+                "RB-SIM-123", 99L, "1234567890", 1L, "12601", "Mangalore Mail",
+                "MAS", "Chennai", "SBC", "Bangalore",
+                LocalDate.of(2026, 11, 10), LocalTime.of(20, 15), LocalTime.of(4, 30),
+                "B1", "3A", 12, "LOWER",
+                new BigDecimal("500.00"), "PENDING_PAYMENT", "PENDING",
+                LocalDateTime.now().plusMinutes(10), "SIMULATED"
+        );
+
+        when(bookingService.getSimulatedPaymentSummary(eq("RB-SIM-123"), eq("regular-user")))
+                .thenReturn(summary);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/bookings/RB-SIM-123/simulated"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bookingRef").value("RB-SIM-123"))
+                .andExpect(jsonPath("$.amount").value(500.00))
+                .andExpect(jsonPath("$.mode").value("SIMULATED"));
+    }
+
+    @Test
+    @WithMockUser(username = "regular-user", roles = {"USER"})
+    void simulatePaymentSuccess_returns200() throws Exception {
+        PaymentResponseDTO responseDTO = new PaymentResponseDTO(
+                "SIM-SUCCESS-1", "RB-SIM-123", 99L, new BigDecimal("500.00"),
+                "SUCCESS", "CONFIRMED", "SIMULATED", "Simulated payment successful and booking confirmed",
+                LocalDateTime.now()
+        );
+
+        when(bookingService.processSimulatedPaymentSuccess(eq("RB-SIM-123"), eq("idemp-key-123"), eq("regular-user")))
+                .thenReturn(responseDTO);
+
+        mockMvc.perform(post("/api/bookings/RB-SIM-123/simulated/success")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"idempotencyKey\": \"idemp-key-123\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionRef").value("SIM-SUCCESS-1"))
+                .andExpect(jsonPath("$.paymentStatus").value("SUCCESS"))
+                .andExpect(jsonPath("$.bookingStatus").value("CONFIRMED"))
+                .andExpect(jsonPath("$.paymentMethod").value("SIMULATED"));
+    }
+
+    @Test
+    @WithMockUser(username = "regular-user", roles = {"USER"})
+    void simulatePaymentFailure_returns200() throws Exception {
+        PaymentResponseDTO responseDTO = new PaymentResponseDTO(
+                "SIM-FAIL-1", "RB-SIM-123", 99L, new BigDecimal("500.00"),
+                "FAILED", "PENDING_PAYMENT", "SIMULATED", "Simulated payment failed: Card declined",
+                LocalDateTime.now()
+        );
+
+        when(bookingService.processSimulatedPaymentFailure(eq("RB-SIM-123"), eq("idemp-fail-123"), eq("Card declined"), eq("regular-user")))
+                .thenReturn(responseDTO);
+
+        mockMvc.perform(post("/api/bookings/RB-SIM-123/simulated/failure")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"idempotencyKey\": \"idemp-fail-123\", \"reason\": \"Card declined\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionRef").value("SIM-FAIL-1"))
+                .andExpect(jsonPath("$.paymentStatus").value("FAILED"))
+                .andExpect(jsonPath("$.bookingStatus").value("PENDING_PAYMENT"))
+                .andExpect(jsonPath("$.paymentMethod").value("SIMULATED"));
     }
 }
