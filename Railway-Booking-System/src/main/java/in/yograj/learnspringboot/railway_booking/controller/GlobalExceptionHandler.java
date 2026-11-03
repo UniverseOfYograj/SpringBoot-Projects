@@ -3,6 +3,7 @@ package in.yograj.learnspringboot.railway_booking.controller;
 import in.yograj.learnspringboot.railway_booking.dto.ApiErrorResponse;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.InvalidAdmissionPassException;
+import in.yograj.learnspringboot.railway_booking.exception.LoginRateLimitException;
 import in.yograj.learnspringboot.railway_booking.exception.QueueUnavailableException;
 import in.yograj.learnspringboot.railway_booking.exception.QueueRateLimitException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
@@ -31,9 +32,19 @@ public class GlobalExceptionHandler {
     private static final String DATA_INTEGRITY_CONFLICT_MESSAGE =
             "Database resource conflict: the request could not be completed due to conflicting data";
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private in.yograj.learnspringboot.railway_booking.observability.RailoraMetrics railoraMetrics;
+
+    public void setRailoraMetrics(in.yograj.learnspringboot.railway_booking.observability.RailoraMetrics railoraMetrics) {
+        this.railoraMetrics = railoraMetrics;
+    }
+
     @ExceptionHandler(QueueUnavailableException.class)
     public ResponseEntity<ApiErrorResponse> handleQueueUnavailable(
             QueueUnavailableException ex, HttpServletRequest request) {
+        if (railoraMetrics != null) {
+            railoraMetrics.recordTatkalQueue("any", "unavailable");
+        }
         ApiErrorResponse body = ApiErrorResponse.of(
                 HttpStatus.SERVICE_UNAVAILABLE.value(),
                 HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(),
@@ -46,6 +57,9 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(QueueRateLimitException.class)
     public ResponseEntity<ApiErrorResponse> handleQueueRateLimit(
             QueueRateLimitException ex, HttpServletRequest request) {
+        if (railoraMetrics != null) {
+            railoraMetrics.recordTatkalQueue("any", "rate_limited");
+        }
         ApiErrorResponse body = ApiErrorResponse.of(
                 HttpStatus.TOO_MANY_REQUESTS.value(),
                 HttpStatus.TOO_MANY_REQUESTS.getReasonPhrase(),
@@ -55,9 +69,26 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", "60").body(body);
     }
 
+    @ExceptionHandler(LoginRateLimitException.class)
+    public ResponseEntity<ApiErrorResponse> handleLoginRateLimit(
+            LoginRateLimitException ex, HttpServletRequest request) {
+        ApiErrorResponse body = ApiErrorResponse.of(
+                HttpStatus.TOO_MANY_REQUESTS.value(),
+                HttpStatus.TOO_MANY_REQUESTS.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(ex.getRetryAfterSeconds()))
+                .body(body);
+    }
+
     @ExceptionHandler(InvalidAdmissionPassException.class)
     public ResponseEntity<ApiErrorResponse> handleInvalidAdmissionPass(
             InvalidAdmissionPassException ex, HttpServletRequest request) {
+        if (railoraMetrics != null) {
+            railoraMetrics.recordTatkalQueue("claim_hold", "invalid_pass");
+        }
         ApiErrorResponse body = ApiErrorResponse.of(
                 HttpStatus.FORBIDDEN.value(),
                 HttpStatus.FORBIDDEN.getReasonPhrase(),
@@ -123,6 +154,13 @@ public class GlobalExceptionHandler {
         String exMsg = ex.getMessage();
         if (exMsg != null && (exMsg.contains("seat_alloc_no_overlap_excl") || exMsg.contains("23P01"))) {
             conflictMessage = "The selected seat is already reserved for an overlapping journey segment. Please select another seat.";
+            if (railoraMetrics != null) {
+                railoraMetrics.recordSeatConflict("overlap_exclusion");
+            }
+        } else {
+            if (railoraMetrics != null) {
+                railoraMetrics.recordSeatConflict("general_conflict");
+            }
         }
         ApiErrorResponse body = ApiErrorResponse.of(
                 HttpStatus.CONFLICT.value(),

@@ -1,5 +1,6 @@
 package in.yograj.learnspringboot.railway_booking.service;
 
+import in.yograj.learnspringboot.railway_booking.config.RedisCacheConfig;
 import in.yograj.learnspringboot.railway_booking.dto.JourneyRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.JourneyResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.JourneyStopResponseDTO;
@@ -8,6 +9,8 @@ import in.yograj.learnspringboot.railway_booking.entity.*;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
 import in.yograj.learnspringboot.railway_booking.repository.*;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,6 +56,7 @@ public class JourneyServiceImpl implements JourneyService {
 
     @Override
     @Transactional
+    @CacheEvict(value = RedisCacheConfig.JOURNEY_SEARCH_CACHE, allEntries = true)
     public JourneyResponseDTO createJourney(JourneyRequestDTO request) {
         if (request == null || request.trainId() == null || request.journeyDate() == null) {
             throw new BadRequestException("Train ID and journey service date are required");
@@ -148,6 +152,11 @@ public class JourneyServiceImpl implements JourneyService {
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(
+            value = RedisCacheConfig.JOURNEY_SEARCH_CACHE,
+            key = "T(String).valueOf(#request.fromStationId()) + '_' + T(String).valueOf(#request.toStationId()) + '_' + T(String).valueOf(#request.journeyDate())",
+            unless = "#result == null"
+    )
     public List<JourneyResponseDTO> searchJourneys(SearchJourneyRequestDTO request) {
         if (request == null) {
             throw new BadRequestException("Journey search request is required");
@@ -157,6 +166,11 @@ public class JourneyServiceImpl implements JourneyService {
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(
+            value = RedisCacheConfig.JOURNEY_SEARCH_CACHE,
+            key = "T(String).valueOf(#fromStationId) + '_' + T(String).valueOf(#toStationId) + '_' + T(String).valueOf(#journeyDate)",
+            unless = "#result == null"
+    )
     public List<JourneyResponseDTO> searchJourneys(Long fromStationId, Long toStationId, LocalDate journeyDate) {
         if (fromStationId == null || toStationId == null || journeyDate == null) {
             throw new BadRequestException("fromStationId, toStationId and journeyDate are required for search");

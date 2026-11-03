@@ -1,7 +1,9 @@
 package in.yograj.learnspringboot.railway_booking.controller;
 
+import in.yograj.learnspringboot.railway_booking.dto.OutboxSummaryDTO;
 import in.yograj.learnspringboot.railway_booking.dto.UserResponseDTO;
 import in.yograj.learnspringboot.railway_booking.integration.githubdata.GitHubRailwayDataImportService;
+import in.yograj.learnspringboot.railway_booking.outbox.OutboxEventService;
 import in.yograj.learnspringboot.railway_booking.service.UserService;
 import jakarta.validation.constraints.Min;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -19,12 +21,15 @@ public class AdminController {
 
     private final UserService userService;
     private final GitHubRailwayDataImportService railwayDataImportService;
+    private final OutboxEventService outboxEventService;
 
     public AdminController(
             UserService userService,
-            GitHubRailwayDataImportService railwayDataImportService) {
+            GitHubRailwayDataImportService railwayDataImportService,
+            OutboxEventService outboxEventService) {
         this.userService = userService;
         this.railwayDataImportService = railwayDataImportService;
+        this.outboxEventService = outboxEventService;
     }
 
     @GetMapping("/users")
@@ -39,5 +44,11 @@ public class AdminController {
             @RequestParam(defaultValue = "1") @Min(1) int maxTrains) {
 
         return railwayDataImportService.importData(startFrom, maxTrains);
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping("/outbox/summary")
+    public OutboxSummaryDTO getOutboxSummary() {
+        return outboxEventService.getOutboxSummary();
     }
 }

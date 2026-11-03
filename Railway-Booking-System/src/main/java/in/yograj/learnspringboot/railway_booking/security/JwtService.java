@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.UUID;
 import java.util.function.Function;
 
 @Service
@@ -109,6 +110,7 @@ public class JwtService implements InitializingBean {
         Date expiry = new Date(now.getTime() + expirationMs);
 
         var tokenBuilder = Jwts.builder()
+                .id(UUID.randomUUID().toString())
                 .subject(username)
                 .issuedAt(now)
                 .expiration(expiry);

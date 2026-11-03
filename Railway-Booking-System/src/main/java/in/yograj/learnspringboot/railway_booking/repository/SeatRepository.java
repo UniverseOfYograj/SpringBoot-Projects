@@ -9,5 +9,7 @@ import java.util.Optional;
 public interface SeatRepository extends JpaRepository<Seat, Long> {
     List<Seat> findByCoach_CoachId(Long coachId);
 
+    List<Seat> findByCoach_CoachIdIn(List<Long> coachIds);
+
     Optional<Seat> findByCoach_CoachIdAndSeatNumber(Long coachId, Integer seatNumber);
 }

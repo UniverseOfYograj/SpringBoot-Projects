@@ -40,6 +40,13 @@ public class TatkalQueueService {
     @Value("${tatkal.queue.entry-ttl-seconds:86400}")
     private long entryTtlSeconds;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private in.yograj.learnspringboot.railway_booking.observability.RailoraMetrics railoraMetrics;
+
+    public void setRailoraMetrics(in.yograj.learnspringboot.railway_booking.observability.RailoraMetrics railoraMetrics) {
+        this.railoraMetrics = railoraMetrics;
+    }
+
     public TatkalQueueService(RedisTatkalQueueStore store, TatkalAdmissionPassService passService,
                               JourneyRepository journeyRepository, TatkalJourneyPolicy journeyPolicy) {
         this.store = store;
@@ -62,7 +69,11 @@ public class TatkalQueueService {
             Instant now = Instant.now();
             String entryId = store.join(journeyId, username, UUID.randomUUID().toString(), now, entryTtlSeconds);
             promote(journeyId, now);
-            return response(requireOwnedEntry(journeyId, entryId, username, now));
+            TatkalQueueEntry entry = requireOwnedEntry(journeyId, entryId, username, now);
+            if (railoraMetrics != null) {
+                railoraMetrics.recordTatkalQueue("join", "ADMITTED".equals(entry.status()) ? "admitted" : "queued");
+            }
+            return response(entry);
         } catch (DataAccessException exception) {
             throw unavailable(exception);
         }
@@ -77,7 +88,11 @@ public class TatkalQueueService {
             promote(journeyId, now);
             String entryId = store.findEntryId(journeyId, username)
                     .orElseThrow(() -> new IllegalArgumentException("No active queue entry was found"));
-            return response(requireOwnedEntry(journeyId, entryId, username, now));
+            TatkalQueueEntry entry = requireOwnedEntry(journeyId, entryId, username, now);
+            if (railoraMetrics != null) {
+                railoraMetrics.recordTatkalQueue("status", "ADMITTED".equals(entry.status()) ? "admitted" : "queued");
+            }
+            return response(entry);
         } catch (DataAccessException exception) {
             throw unavailable(exception);
         }
@@ -98,6 +113,9 @@ public class TatkalQueueService {
                 throw new IllegalStateException("Queue entry is no longer active");
             }
             promote(journeyId, Instant.now());
+            if (railoraMetrics != null) {
+                railoraMetrics.recordTatkalQueue("leave", "left");
+            }
         } catch (DataAccessException exception) {
             throw unavailable(exception);
         }
@@ -113,6 +131,9 @@ public class TatkalQueueService {
                     || !claims.admissionId().equals(entry.admissionId())
                     || !store.claimHold(journeyId, entry.entryId(), username, claims.admissionId(), seatId, Instant.now())) {
                 throw new InvalidAdmissionPassException("Tatkal admission has expired or was already used");
+            }
+            if (railoraMetrics != null) {
+                railoraMetrics.recordTatkalQueue("claim_hold", "success");
             }
             return claims;
         } catch (DataAccessException exception) {

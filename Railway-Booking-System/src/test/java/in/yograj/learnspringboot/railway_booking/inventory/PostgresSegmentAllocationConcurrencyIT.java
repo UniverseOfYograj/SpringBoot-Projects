@@ -81,6 +81,8 @@ public class PostgresSegmentAllocationConcurrencyIT {
     void verifyDatabaseSafety() throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
             String url = conn.getMetaData().getURL();
+            System.out.printf("[DATABASE SAFETY AUDIT] Active datasource: %s | Engine: %s %s%n",
+                    url, conn.getMetaData().getDatabaseProductName(), conn.getMetaData().getDatabaseProductVersion());
             // Critical Safety Guard: Never connect to valuable development database
             if (url != null && url.contains(":5432/railway_booking") && !url.contains("_test")) {
                 throw new IllegalStateException("FATAL SAFETY VIOLATION: Integration tests must never execute against the development database 'railway_booking'.");
@@ -200,6 +202,9 @@ public class PostgresSegmentAllocationConcurrencyIT {
 
         assertEquals(1, successCount.get(), "Exactly one concurrent thread must secure the hold");
         assertEquals(threadCount - 1, conflictCount.get(), "All other concurrent attempts must be rejected with conflict");
+
+        // Post-execution Database Audit: Verify single persisted allocation and no overlapping records
+        assertDatabaseAllocationsNoOverlap(targetBerth.getInventoryId(), 1);
     }
 
     @Test
@@ -263,6 +268,161 @@ public class PostgresSegmentAllocationConcurrencyIT {
                 ) VALUES (?, ?, ?, 2, 4, ?, 'HOLD', clock_timestamp() + interval '5 minutes', clock_timestamp(), clock_timestamp())
             """, berth.getInventoryId(), ctx.stops.get(1).getJourneyStopId(), ctx.stops.get(3).getJourneyStopId(), ctx.userB.getUserId());
         }, "PostgreSQL GiST exclusion constraint (seat_alloc_no_overlap_excl) must throw DataIntegrityViolationException (SQLSTATE 23P01)");
+    }
+
+    @Test
+    @Order(7)
+    @DisplayName("Concurrent race on overlapping segments [1, 3) and [2, 4): exactly one succeeds")
+    void testConcurrentRaceOnOverlappingSegments() throws Exception {
+        TestRunContext ctx = setupTestRun();
+        JourneySeatInventory targetBerth = ctx.berths.get(0);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch startGate = new CountDownLatch(1);
+        CountDownLatch doneGate = new CountDownLatch(2);
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger conflictCount = new AtomicInteger(0);
+
+        String user1 = "concurrent-overlap-user-1-" + UUID.randomUUID().toString().substring(0, 6);
+        String user2 = "concurrent-overlap-user-2-" + UUID.randomUUID().toString().substring(0, 6);
+        user(user1);
+        user(user2);
+
+        // Task A: requests [1, 3) (Stop 1 to 3: stops 0 to 2)
+        pool.submit(() -> {
+            try {
+                startGate.await();
+                seatInventoryService.holdSeat(
+                        ctx.journey.getJourneyId(), targetBerth.getSeat().getSeatId(), 5,
+                        ctx.stops.get(0).getJourneyStopId(), ctx.stops.get(2).getJourneyStopId(), user1);
+                successCount.incrementAndGet();
+            } catch (BadRequestException | DataIntegrityViolationException ex) {
+                conflictCount.incrementAndGet();
+            } catch (Exception ex) {
+                // unexpected exception
+            } finally {
+                doneGate.countDown();
+            }
+        });
+
+        // Task B: requests overlapping [2, 4) (Stop 2 to 4: stops 1 to 3)
+        pool.submit(() -> {
+            try {
+                startGate.await();
+                seatInventoryService.holdSeat(
+                        ctx.journey.getJourneyId(), targetBerth.getSeat().getSeatId(), 5,
+                        ctx.stops.get(1).getJourneyStopId(), ctx.stops.get(3).getJourneyStopId(), user2);
+                successCount.incrementAndGet();
+            } catch (BadRequestException | DataIntegrityViolationException ex) {
+                conflictCount.incrementAndGet();
+            } catch (Exception ex) {
+                // unexpected exception
+            } finally {
+                doneGate.countDown();
+            }
+        });
+
+        startGate.countDown();
+        assertTrue(doneGate.await(10, TimeUnit.SECONDS), "Concurrent overlapping hold tasks must finish within timeout");
+        pool.shutdown();
+
+        assertEquals(1, successCount.get(), "Exactly one concurrent thread must secure the hold on overlapping segment");
+        assertEquals(1, conflictCount.get(), "The competing overlapping attempt must be rejected with conflict");
+
+        // Post-execution Database Audit: Verify single persisted allocation and no overlapping records
+        assertDatabaseAllocationsNoOverlap(targetBerth.getInventoryId(), 1);
+    }
+
+    @Test
+    @Order(8)
+    @DisplayName("Concurrent race on adjacent non-overlapping segments [1, 3) and [3, 5): both succeed")
+    void testConcurrentRaceOnAdjacentNonOverlappingSegments() throws Exception {
+        TestRunContext ctx = setupTestRun();
+        JourneySeatInventory targetBerth = ctx.berths.get(1);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch startGate = new CountDownLatch(1);
+        CountDownLatch doneGate = new CountDownLatch(2);
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger conflictCount = new AtomicInteger(0);
+
+        String user1 = "concurrent-adj-user-1-" + UUID.randomUUID().toString().substring(0, 6);
+        String user2 = "concurrent-adj-user-2-" + UUID.randomUUID().toString().substring(0, 6);
+        user(user1);
+        user(user2);
+
+        // Task A: requests [1, 3) (Stop 1 to 3: stops 0 to 2)
+        pool.submit(() -> {
+            try {
+                startGate.await();
+                seatInventoryService.holdSeat(
+                        ctx.journey.getJourneyId(), targetBerth.getSeat().getSeatId(), 5,
+                        ctx.stops.get(0).getJourneyStopId(), ctx.stops.get(2).getJourneyStopId(), user1);
+                successCount.incrementAndGet();
+            } catch (BadRequestException | DataIntegrityViolationException ex) {
+                conflictCount.incrementAndGet();
+            } catch (Exception ex) {
+                // unexpected exception
+            } finally {
+                doneGate.countDown();
+            }
+        });
+
+        // Task B: requests adjacent non-overlapping [3, 5) (Stop 3 to 5: stops 2 to 4)
+        pool.submit(() -> {
+            try {
+                startGate.await();
+                seatInventoryService.holdSeat(
+                        ctx.journey.getJourneyId(), targetBerth.getSeat().getSeatId(), 5,
+                        ctx.stops.get(2).getJourneyStopId(), ctx.stops.get(4).getJourneyStopId(), user2);
+                successCount.incrementAndGet();
+            } catch (BadRequestException | DataIntegrityViolationException ex) {
+                conflictCount.incrementAndGet();
+            } catch (Exception ex) {
+                // unexpected exception
+            } finally {
+                doneGate.countDown();
+            }
+        });
+
+        startGate.countDown();
+        assertTrue(doneGate.await(10, TimeUnit.SECONDS), "Concurrent adjacent hold tasks must finish within timeout");
+        pool.shutdown();
+
+        assertEquals(2, successCount.get(), "Both adjacent non-overlapping holds must succeed");
+        assertEquals(0, conflictCount.get(), "Neither adjacent attempt should be rejected");
+
+        // Post-execution Database Audit: Verify both persisted allocations exist without overlap
+        assertDatabaseAllocationsNoOverlap(targetBerth.getInventoryId(), 2);
+    }
+
+    /**
+     * Post-Execution Database Audit:
+     * Queries persisted allocations for the inventory, validates active count,
+     * and performs pairwise interval overlap verification.
+     */
+    private void assertDatabaseAllocationsNoOverlap(Long inventoryId, int expectedActiveCount) {
+        List<SeatAllocation> allocations = allocationRepository.findByInventory_InventoryId(inventoryId);
+        List<SeatAllocation> activeAllocations = allocations.stream()
+                .filter(a -> "HOLD".equalsIgnoreCase(a.getStatus()) || "BOOKED".equalsIgnoreCase(a.getStatus()))
+                .toList();
+
+        assertEquals(expectedActiveCount, activeAllocations.size(),
+                "Persisted active allocation count in database must match expected");
+
+        // Pairwise interval audit: for half-open intervals [fromA, toA) and [fromB, toB),
+        // overlap occurs iff max(fromA, fromB) < min(toA, toB).
+        for (int i = 0; i < activeAllocations.size(); i++) {
+            for (int j = i + 1; j < activeAllocations.size(); j++) {
+                SeatAllocation a = activeAllocations.get(i);
+                SeatAllocation b = activeAllocations.get(j);
+                int maxStart = Math.max(a.getFromStopSeq(), b.getFromStopSeq());
+                int minEnd = Math.min(a.getToStopSeq(), b.getToStopSeq());
+                assertTrue(maxStart >= minEnd,
+                        String.format("CRITICAL CONCURRENCY DEFECT: Overlapping active allocations committed in database for inventory %d: [%d, %d) and [%d, %d)",
+                                inventoryId, a.getFromStopSeq(), a.getToStopSeq(), b.getFromStopSeq(), b.getToStopSeq()));
+            }
+        }
     }
 
     // Helper context setup

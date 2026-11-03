@@ -39,8 +39,17 @@ public class OutboxEvent {
     @Column(name = "retry_count", nullable = false)
     private int retryCount = 0;
 
+    @Column(name = "next_attempt_at")
+    private LocalDateTime nextAttemptAt;
+
     @Column(name = "max_retries", nullable = false)
     private int maxRetries = 3;
+
+    @Column(name = "claim_token", length = 36)
+    private String claimToken;
+
+    @Column(name = "claimed_at")
+    private LocalDateTime claimedAt;
 
     @Column(name = "last_error", columnDefinition = "TEXT")
     private String lastError;

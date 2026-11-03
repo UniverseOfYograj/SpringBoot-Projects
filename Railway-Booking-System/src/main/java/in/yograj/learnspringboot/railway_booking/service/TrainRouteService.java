@@ -1,5 +1,6 @@
 package in.yograj.learnspringboot.railway_booking.service;
 
+import in.yograj.learnspringboot.railway_booking.config.RedisCacheConfig;
 import in.yograj.learnspringboot.railway_booking.dto.CreateTrainRouteRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.TrainRouteResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.TrainStopRequestDTO;
@@ -14,6 +15,7 @@ import in.yograj.learnspringboot.railway_booking.repository.StationRepository;
 import in.yograj.learnspringboot.railway_booking.repository.TrainRepository;
 import in.yograj.learnspringboot.railway_booking.repository.TrainRouteRepository;
 import in.yograj.learnspringboot.railway_booking.repository.TrainStopRepository;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +43,7 @@ public class TrainRouteService {
     }
 
     @Transactional
+    @CacheEvict(value = RedisCacheConfig.TRAIN_SEARCH_CACHE, allEntries = true)
     public TrainRouteResponseDTO createRoute(Long trainId, CreateTrainRouteRequestDTO request) {
         Train train = trainRepository.findById(trainId)
                 .orElseThrow(() -> new ResourceNotFoundException("Train not found with id: " + trainId));

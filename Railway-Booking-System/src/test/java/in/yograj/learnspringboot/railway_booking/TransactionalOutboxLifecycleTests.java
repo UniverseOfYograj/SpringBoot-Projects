@@ -33,6 +33,11 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -46,6 +51,9 @@ import static org.mockito.Mockito.*;
         "spring.datasource.password=",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.flyway.enabled=false",
+        "railway.outbox.kafka.enabled=false",
+        "railway.cache.enabled=false",
+        "tatkal.queue.enabled=false",
         "jwt.access-secret=test-access-signing-secret-with-minimum-32-bytes-length",
         "jwt.refresh-secret=test-refresh-signing-secret-with-minimum-32-bytes-length"
 })
@@ -282,6 +290,44 @@ class TransactionalOutboxLifecycleTests {
     }
 
     @Test
+    void outboxRelay_twoWorkersClaimEventOnlyOnce() throws Exception {
+        OutboxEvent event = transactionTemplate.execute(status ->
+                outboxEventService.stageEvent("BOOKING", "RB-CLAIM-001", "BOOKING_CONFIRMED",
+                        java.util.Map.of("test", "claim"))
+        );
+        assertNotNull(event);
+
+        CountDownLatch publishStarted = new CountDownLatch(1);
+        CountDownLatch allowPublishToFinish = new CountDownLatch(1);
+        AtomicInteger publishCalls = new AtomicInteger();
+        doAnswer(invocation -> {
+            publishCalls.incrementAndGet();
+            publishStarted.countDown();
+            assertTrue(allowPublishToFinish.await(10, TimeUnit.SECONDS),
+                    "Test must release the broker acknowledgement wait");
+            return null;
+        }).when(outboxMessagePublisher).publish(any(OutboxEvent.class));
+
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            Future<Integer> firstWorker = workers.submit(() -> outboxEventRelay.relayPendingEvents(10));
+            assertTrue(publishStarted.await(10, TimeUnit.SECONDS), "First worker must begin publishing");
+
+            int secondWorkerPublished = outboxEventRelay.relayPendingEvents(10);
+            allowPublishToFinish.countDown();
+
+            assertEquals(0, secondWorkerPublished);
+            assertEquals(1, firstWorker.get(10, TimeUnit.SECONDS));
+            assertEquals(1, publishCalls.get());
+            assertEquals(OutboxEventStatus.PUBLISHED,
+                    outboxEventRepository.findById(event.getEventId()).orElseThrow().getStatus());
+        } finally {
+            allowPublishToFinish.countDown();
+            workers.shutdownNow();
+        }
+    }
+
+    @Test
     void outboxRelay_publicationFailure_marksFailedIncrementsRetryCountAndRecordsError() throws Exception {
         doThrow(new RuntimeException("Kafka broker unreachable")).when(outboxMessagePublisher).publish(any(OutboxEvent.class));
 
@@ -299,6 +345,46 @@ class TransactionalOutboxLifecycleTests {
         assertEquals(1, updated.getRetryCount());
         assertEquals("Kafka broker unreachable", updated.getLastError());
         assertNull(updated.getPublishedAt());
+    }
+
+    @Test
+    void outboxRelay_retriesAfterDelayAndMarksExhaustedEventTerminal() throws Exception {
+        OutboxEvent event = new OutboxEvent(
+                UUID.randomUUID().toString(),
+                "BOOKING",
+                "RB-RETRY-001",
+                "BOOKING_CONFIRMED",
+                "{}",
+                LocalDateTime.now()
+        );
+        event.setMaxRetries(2);
+        outboxEventRepository.saveAndFlush(event);
+        doThrow(new RuntimeException("Temporary broker failure"))
+                .when(outboxMessagePublisher).publish(any(OutboxEvent.class));
+
+        assertEquals(0, outboxEventRelay.relayPendingEvents(10));
+        OutboxEvent firstFailure = outboxEventRepository.findById(event.getEventId()).orElseThrow();
+        assertEquals(OutboxEventStatus.FAILED, firstFailure.getStatus());
+        assertEquals(1, firstFailure.getRetryCount());
+        assertNotNull(firstFailure.getNextAttemptAt());
+        assertTrue(firstFailure.getNextAttemptAt().isAfter(LocalDateTime.now()));
+
+        assertEquals(0, outboxEventRelay.relayPendingEvents(10));
+        verify(outboxMessagePublisher, times(1)).publish(any(OutboxEvent.class));
+
+        firstFailure.setNextAttemptAt(LocalDateTime.now().minusSeconds(1));
+        outboxEventRepository.saveAndFlush(firstFailure);
+        assertEquals(0, outboxEventRelay.relayPendingEvents(10));
+
+        OutboxEvent terminalFailure = outboxEventRepository.findById(event.getEventId()).orElseThrow();
+        assertEquals(OutboxEventStatus.DEAD, terminalFailure.getStatus());
+        assertEquals(2, terminalFailure.getRetryCount());
+        assertEquals("Temporary broker failure", terminalFailure.getLastError());
+        assertNull(terminalFailure.getClaimToken());
+        verify(outboxMessagePublisher, times(2)).publish(any(OutboxEvent.class));
+
+        assertEquals(0, outboxEventRelay.relayPendingEvents(10));
+        verifyNoMoreInteractions(outboxMessagePublisher);
     }
 
     @Test
@@ -349,5 +435,121 @@ class TransactionalOutboxLifecycleTests {
 
         assertFalse(duplicate, "Duplicate event delivery must be skipped");
         assertEquals(1, processCount.get(), "Handler must NOT be executed for duplicate event");
+    }
+
+    @Test
+    void idempotentConsumer_handlerFailureRollsBackMarkerAndDatabaseSideEffects() {
+        String eventId = UUID.randomUUID().toString();
+        String consumerName = "database-side-effect-consumer";
+
+        assertThrows(IllegalStateException.class, () -> idempotentConsumerService.processIdempotently(
+                eventId,
+                consumerName,
+                "BOOKING_CONFIRMED",
+                id -> {
+                    processedConsumerEventRepository.saveAndFlush(new ProcessedConsumerEvent(
+                            id,
+                            "consumer-side-effect",
+                            "BOOKING_CONFIRMED",
+                            LocalDateTime.now()
+                    ));
+                    throw new IllegalStateException("Simulated database-local consumer failure");
+                }
+        ));
+
+        assertFalse(processedConsumerEventRepository.existsByEventIdAndConsumerName(eventId, consumerName));
+        assertFalse(processedConsumerEventRepository.existsByEventIdAndConsumerName(eventId, "consumer-side-effect"));
+    }
+
+    @Test
+    void staleClaim_recoveryAfterTimeout_incrementsRetryAndPublishes() throws Exception {
+        doNothing().when(outboxMessagePublisher).publish(any(OutboxEvent.class));
+
+        OutboxEvent staleEvent = new OutboxEvent(
+                "stale-event-001",
+                "BOOKING",
+                "RB-STALE-001",
+                "BOOKING_CONFIRMED",
+                "{}",
+                LocalDateTime.now().minusMinutes(10)
+        );
+        staleEvent.setStatus(OutboxEventStatus.CLAIMED);
+        staleEvent.setClaimToken("dead-worker-token");
+        staleEvent.setClaimedAt(LocalDateTime.now().minusMinutes(5));
+        staleEvent.setRetryCount(0);
+        staleEvent.setMaxRetries(3);
+        outboxEventRepository.saveAndFlush(staleEvent);
+
+        outboxEventRelay.setClaimTimeoutMs(60000); // 1 minute timeout
+        int published = outboxEventRelay.relayPendingEvents(10);
+        assertEquals(1, published, "Stale claim must be reclaimed and published");
+
+        OutboxEvent updated = outboxEventRepository.findById("stale-event-001").orElseThrow();
+        assertEquals(OutboxEventStatus.PUBLISHED, updated.getStatus());
+        assertEquals(1, updated.getRetryCount(), "Retry count must be incremented upon reclaiming stale lease");
+        assertNotNull(updated.getPublishedAt());
+        verify(outboxMessagePublisher, times(1)).publish(any(OutboxEvent.class));
+    }
+
+    @Test
+    void staleClaim_repeatedCrashesExhaustRetries_marksDeadWithoutPublishing() throws Exception {
+        OutboxEvent crashPoisonPill = new OutboxEvent(
+                "crash-pill-001",
+                "BOOKING",
+                "RB-CRASH-001",
+                "BOOKING_CONFIRMED",
+                "{}",
+                LocalDateTime.now().minusMinutes(10)
+        );
+        crashPoisonPill.setStatus(OutboxEventStatus.CLAIMED);
+        crashPoisonPill.setClaimToken("crashed-worker-token");
+        crashPoisonPill.setClaimedAt(LocalDateTime.now().minusMinutes(5));
+        crashPoisonPill.setRetryCount(2); // Already failed/crashed twice
+        crashPoisonPill.setMaxRetries(3);
+        outboxEventRepository.saveAndFlush(crashPoisonPill);
+
+        outboxEventRelay.setClaimTimeoutMs(60000);
+        int published = outboxEventRelay.relayPendingEvents(10);
+        assertEquals(0, published, "Crash-exhausted event must not be dispatched to broker");
+
+        OutboxEvent terminal = outboxEventRepository.findById("crash-pill-001").orElseThrow();
+        assertEquals(OutboxEventStatus.DEAD, terminal.getStatus());
+        assertEquals(3, terminal.getRetryCount());
+        assertTrue(terminal.getLastError().contains("Exceeded max retries"));
+        assertNull(terminal.getClaimToken());
+        verify(outboxMessagePublisher, never()).publish(any(OutboxEvent.class));
+    }
+
+    @Test
+    void outboxSummary_reportsAccurateStatusCountsAndRecentFailures() {
+        OutboxEvent e1 = new OutboxEvent("ev-1", "BOOKING", "RB-1", "BOOKING_CONFIRMED", "{}", LocalDateTime.now());
+        e1.setStatus(OutboxEventStatus.PENDING);
+
+        OutboxEvent e2 = new OutboxEvent("ev-2", "BOOKING", "RB-2", "BOOKING_CONFIRMED", "{}", LocalDateTime.now());
+        e2.setStatus(OutboxEventStatus.PUBLISHED);
+        e2.setPublishedAt(LocalDateTime.now());
+
+        OutboxEvent e3 = new OutboxEvent("ev-3", "PAYMENT", "TX-3", "PAYMENT_FAILED", "{}", LocalDateTime.now());
+        e3.setStatus(OutboxEventStatus.FAILED);
+        e3.setRetryCount(1);
+        e3.setLastError("Connection timed out");
+
+        OutboxEvent e4 = new OutboxEvent("ev-4", "BOOKING", "RB-4", "BOOKING_CANCELLED", "{}", LocalDateTime.now());
+        e4.setStatus(OutboxEventStatus.DEAD);
+        e4.setRetryCount(3);
+        e4.setLastError("Terminal payload failure");
+
+        outboxEventRepository.saveAllAndFlush(List.of(e1, e2, e3, e4));
+
+        in.yograj.learnspringboot.railway_booking.dto.OutboxSummaryDTO summary = outboxEventService.getOutboxSummary();
+        assertNotNull(summary);
+        assertEquals(1, summary.pendingCount());
+        assertEquals(1, summary.publishedCount());
+        assertEquals(1, summary.failedCount());
+        assertEquals(1, summary.deadCount());
+        assertEquals(0, summary.claimedCount());
+        assertEquals(4, summary.totalCount());
+
+        assertEquals(2, summary.recentFailures().size(), "Should report recent FAILED and DEAD events");
     }
 }
