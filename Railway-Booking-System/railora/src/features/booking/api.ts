@@ -10,7 +10,12 @@ import type {
   PageResponseDTO,
   PaymentRequestDTO,
   PaymentResponseDTO,
+  RazorpayOrderResponseDTO,
+  RazorpayCheckoutResponse,
+  RazorpayPaymentStatusDTO,
   SeatAvailabilityDTO,
+  SimulatedPaymentRequestDTO,
+  SimulatedPaymentSummaryDTO,
 } from './types';
 
 export const bookingApi = {
@@ -92,11 +97,91 @@ export const bookingApi = {
   },
 
   /**
+   * Get simulated payment summary for a pending booking.
+   */
+  async getSimulatedPaymentSummary(bookingRef: string): Promise<SimulatedPaymentSummaryDTO> {
+    const response = await apiClient.get<SimulatedPaymentSummaryDTO>(
+      API_PATHS.BOOKINGS.SIMULATED_SUMMARY(bookingRef),
+    );
+    return response.data;
+  },
+
+  /**
+   * Initiate simulated checkout and validate booking state.
+   */
+  async initiateSimulatedPayment(bookingRef: string): Promise<SimulatedPaymentSummaryDTO> {
+    const response = await apiClient.post<SimulatedPaymentSummaryDTO>(
+      API_PATHS.BOOKINGS.SIMULATED_INITIATE(bookingRef),
+    );
+    return response.data;
+  },
+
+  /**
+   * Simulate successful payment processing and booking confirmation.
+   */
+  async simulatePaymentSuccess(
+    bookingRef: string,
+    request: SimulatedPaymentRequestDTO,
+  ): Promise<PaymentResponseDTO> {
+    const response = await apiClient.post<PaymentResponseDTO>(
+      API_PATHS.BOOKINGS.SIMULATED_SUCCESS(bookingRef),
+      request,
+    );
+    return response.data;
+  },
+
+  /**
+   * Simulate failed payment processing (preserving booking hold for retry).
+   */
+  async simulatePaymentFailure(
+    bookingRef: string,
+    request: SimulatedPaymentRequestDTO,
+  ): Promise<PaymentResponseDTO> {
+    const response = await apiClient.post<PaymentResponseDTO>(
+      API_PATHS.BOOKINGS.SIMULATED_FAILURE(bookingRef),
+      request,
+    );
+    return response.data;
+  },
+
+  async createRazorpayOrder(bookingRef: string): Promise<RazorpayOrderResponseDTO> {
+    const response = await apiClient.post<RazorpayOrderResponseDTO>(
+      API_PATHS.BOOKINGS.RAZORPAY_ORDER(bookingRef),
+    );
+    return response.data;
+  },
+
+  async verifyRazorpayPayment(
+    bookingRef: string,
+    checkout: RazorpayCheckoutResponse,
+  ): Promise<RazorpayPaymentStatusDTO> {
+    const response = await apiClient.post<RazorpayPaymentStatusDTO>(
+      API_PATHS.BOOKINGS.RAZORPAY_VERIFY(bookingRef),
+      {
+        orderId: checkout.razorpay_order_id,
+        paymentId: checkout.razorpay_payment_id,
+        signature: checkout.razorpay_signature,
+      },
+    );
+    return response.data;
+  },
+
+  /**
    * Fetch single booking details by unique reference.
    */
   async getBookingByRef(bookingRef: string): Promise<BookingDetailResponseDTO> {
     const response = await apiClient.get<BookingDetailResponseDTO>(
       API_PATHS.BOOKINGS.BY_REF(bookingRef),
+    );
+    return response.data;
+  },
+
+  /**
+   * Fetch single booking details by 10-digit numeric PNR.
+   */
+  async getBookingByPnr(pnr: string): Promise<BookingDetailResponseDTO> {
+    const response = await apiClient.get<BookingDetailResponseDTO>(
+      API_PATHS.BOOKINGS.BY_PNR(pnr),
     );
     return response.data;
   },

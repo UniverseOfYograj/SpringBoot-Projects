@@ -72,20 +72,30 @@ describe('Train Search — Utility Functions', () => {
       expect(validateStationCode('A')).toBe('Station code must be at least 2 characters');
     });
 
-    it('returns error when station code exceeds 5 characters', () => {
-      expect(validateStationCode('ABCDEF')).toBe('Station code cannot exceed 5 characters');
+    it('returns error when station code exceeds 30 characters', () => {
+      expect(validateStationCode('A'.repeat(31))).toBe('Station code cannot exceed 30 characters');
+      expect(validateStationCode('STN'.repeat(11))).toBe('Station code cannot exceed 30 characters');
     });
 
-    it('returns error when station code contains non-letter characters', () => {
-      expect(validateStationCode('ND1')).toBe('Station code must contain letters only');
-      expect(validateStationCode('H-W')).toBe('Station code must contain letters only');
+    it('returns error when station code contains non-alphanumeric or special characters', () => {
+      expect(validateStationCode('H-W')).toBe('Station code must contain letters and numbers only');
+      expect(validateStationCode('ND@')).toBe('Station code must contain letters and numbers only');
+      expect(validateStationCode('STN 123')).toBe('Station code must contain letters and numbers only');
+      expect(validateStationCode('ND!LS')).toBe('Station code must contain letters and numbers only');
     });
 
     it('returns null for valid station codes', () => {
       expect(validateStationCode('NDLS')).toBeNull();
+      expect(validateStationCode('BCT')).toBeNull();
       expect(validateStationCode('HWH')).toBeNull();
       expect(validateStationCode('CSMT')).toBeNull();
+      expect(validateStationCode('STN70094')).toBeNull();
+      expect(validateStationCode('STN92133')).toBeNull();
       expect(validateStationCode('bct')).toBeNull(); // case normalization
+      expect(validateStationCode('stn70094')).toBeNull(); // case normalization
+      expect(validateStationCode('stn92133')).toBeNull(); // case normalization
+      expect(validateStationCode('   NDLS   ')).toBeNull(); // trimming
+      expect(validateStationCode('A'.repeat(30))).toBeNull(); // boundary 30 chars
     });
   });
 
@@ -467,7 +477,7 @@ describe('TrainSearchPage Integration', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/search?from=123&to=NDLS']}>
+        <MemoryRouter initialEntries={['/search?from=H-W&to=NDLS']}>
           <TrainSearchPage />
         </MemoryRouter>
       </QueryClientProvider>
@@ -478,5 +488,19 @@ describe('TrainSearchPage Integration', () => {
     expect(screen.getByText(/Invalid Search Parameters/i)).toBeInTheDocument();
     expect(screen.getByText(/Invalid origin station code/i)).toBeInTheDocument();
     expect(screen.queryByText(/No direct trains found/i)).not.toBeInTheDocument();
+  });
+  it('accepts alphanumeric station codes (e.g. STN70094 -> STN92133) and triggers search', async () => {
+    const searchTrainsSpy = vi.spyOn(api, 'searchTrains').mockResolvedValue([]);
+    const queryClient = createTestQueryClient();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/search?from=STN70094&to=STN92133']}>
+          <TrainSearchPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(searchTrainsSpy).toHaveBeenCalledWith('STN70094', 'STN92133', expect.any(AbortSignal));
   });
 });

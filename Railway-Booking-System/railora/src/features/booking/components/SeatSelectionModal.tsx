@@ -18,6 +18,13 @@ import { Badge } from '@/components/ui/Badge';
 import { useAuth } from '@/features/auth/AuthContext';
 import { bookingApi } from '../api';
 import { clearPaymentAttempt, getOrCreatePaymentAttempt } from '../paymentAttempt';
+import {
+  isMockPaymentEnabled,
+  isRazorpayCheckoutEnabled,
+  isSimulatedPaymentEnabled,
+  openRazorpayCheckout,
+} from '../razorpayCheckout';
+import { SimulatedCheckoutModal } from './SimulatedCheckoutModal';
 import type {
   BookingResponseDTO,
   JourneyDTO,
@@ -70,6 +77,7 @@ export function SeatSelectionModal({
   const [booking, setBooking] = useState<BookingResponseDTO | null>(null);
   const [payment, setPayment] = useState<PaymentResponseDTO | null>(null);
   const [simulateFailure, setSimulateFailure] = useState(false);
+  const [showSimulatedModal, setShowSimulatedModal] = useState(false);
   const [paymentAttemptPending, setPaymentAttemptPending] = useState(false);
   const paymentInFlight = useRef(false);
 
@@ -265,6 +273,46 @@ export function SeatSelectionModal({
     setError(null);
 
     try {
+      if (isRazorpayCheckoutEnabled()) {
+        if (!booking.amount || booking.amount <= 0) {
+          throw new Error('A server-calculated fare is not available for this booking yet.');
+        }
+        const order = await bookingApi.createRazorpayOrder(booking.bookingRef);
+        const checkoutResponse = await openRazorpayCheckout(order);
+        const verification = await bookingApi.verifyRazorpayPayment(booking.bookingRef, checkoutResponse);
+        const refreshedBooking = await bookingApi.getBookingByRef(booking.bookingRef);
+        setBooking((current) => current
+          ? {
+              ...current,
+              bookingStatus: refreshedBooking.bookingStatus,
+              paymentStatus: refreshedBooking.paymentStatus,
+            }
+          : current);
+
+        if (verification.paymentStatus !== 'SUCCESS' || refreshedBooking.bookingStatus !== 'CONFIRMED') {
+          setError(verification.message || 'Payment is pending confirmation. Refresh your booking status shortly.');
+          return;
+        }
+
+        if (!isMockPaymentEnabled()) {
+          throw new Error('No payment provider is configured for this environment.');
+        }
+
+        setPayment({
+          transactionRef: verification.transactionRef,
+          bookingRef: verification.bookingRef,
+          bookingId: booking.bookingId,
+          amount: booking.amount,
+          paymentStatus: refreshedBooking.paymentStatus,
+          bookingStatus: refreshedBooking.bookingStatus,
+          paymentMethod: 'RAZORPAY',
+          message: verification.message,
+          transactionTime: new Date().toISOString(),
+        });
+        setStep('confirmed');
+        return;
+      }
+
       const attempt = getOrCreatePaymentAttempt(booking.bookingRef, simulateFailure);
       setSimulateFailure(attempt.simulateFailure);
       setPaymentAttemptPending(true);
@@ -397,7 +445,7 @@ export function SeatSelectionModal({
                 </span>
                 <span className="flex items-center gap-1.5">
                   <ShieldCheck size={14} className="text-teal-600" />
-                  Standard Fare: <strong className="text-ink-primary font-mono text-sm">₹500.00</strong>
+                  Final fare is calculated and returned by the server after booking creation.
                 </span>
               </div>
 
@@ -525,7 +573,9 @@ export function SeatSelectionModal({
                 </div>
                 <div className="flex items-center justify-between border-t border-surface-border/60 pt-2 text-sm font-bold text-navy-700">
                   <span>Total Amount Due:</span>
-                  <span className="font-mono text-base text-teal-700">₹{booking.amount?.toFixed(2) ?? '500.00'}</span>
+                  <span className="font-mono text-base text-teal-700">
+                    {booking.amount != null ? `₹${booking.amount.toFixed(2)}` : 'Unavailable'}
+                  </span>
                 </div>
               </div>
 
@@ -533,15 +583,23 @@ export function SeatSelectionModal({
               <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-4 mb-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-teal-900 mb-1">
                   <CreditCard size={16} className="text-teal-700" />
-                  Instant Payment (Mock Gateway)
+                  {isRazorpayCheckoutEnabled()
+                    ? 'Secure Payment (Razorpay Test Mode)'
+                    : isMockPaymentEnabled()
+                      ? 'Instant Payment (Mock Gateway)'
+                      : 'Payments unavailable'}
                 </div>
                 <p className="text-xs text-teal-700 leading-relaxed">
-                  Idempotent mock payment simulation verifying transaction isolation and double-spend protection.
+                  {isRazorpayCheckoutEnabled()
+                    ? 'Payment completion is verified by the Railora server before confirming your booking.'
+                    : isMockPaymentEnabled()
+                      ? 'Idempotent mock payment simulation verifying transaction isolation and double-spend protection.'
+                      : 'Payment processing is not configured. Please contact support.'}
                 </p>
               </div>
 
               {/* Simulated Failure Toggle (for manual testing & resilience verification) */}
-              <div className="mb-5 flex items-center gap-2 text-xs text-ink-secondary bg-surface-muted/50 p-2.5 rounded-lg border border-surface-border">
+              {isMockPaymentEnabled() && <div className="mb-5 flex items-center gap-2 text-xs text-ink-secondary bg-surface-muted/50 p-2.5 rounded-lg border border-surface-border">
                 <input
                   id="simulate-failure-checkbox"
                   type="checkbox"
@@ -553,32 +611,52 @@ export function SeatSelectionModal({
                 <label htmlFor="simulate-failure-checkbox" className="cursor-pointer select-none">
                   Simulate gateway payment failure (test resilience and retry capability)
                 </label>
-              </div>
+              </div>}
 
               {/* Actions */}
               <div className="flex items-center justify-end gap-2 border-t border-surface-border pt-4">
                 <Button variant="secondary" size="sm" onClick={() => setStep('select-seat')} disabled={actionLoading}>
                   Back
                 </Button>
-                <Button
-                  variant="accent"
-                  size="md"
-                  onClick={handlePay}
-                  isLoading={actionLoading}
-                  disabled={paymentAttemptPending && actionLoading}
-                >
-                  {error ? (
-                    <>
-                      <RefreshCw size={15} />
-                      Retry Payment
-                    </>
-                  ) : (
-                    <>
-                      Pay ₹{booking.amount?.toFixed(2) ?? '500.00'} & Confirm
-                      <CheckCircle2 size={16} />
-                    </>
-                  )}
-                </Button>
+                {isSimulatedPaymentEnabled() && (
+                  <Button
+                    variant="accent"
+                    size="md"
+                    onClick={() => setShowSimulatedModal(true)}
+                  >
+                    <CreditCard size={15} />
+                    Demo Checkout
+                  </Button>
+                )}
+                {!isSimulatedPaymentEnabled() && (
+                  <Button
+                    variant="accent"
+                    size="md"
+                    onClick={handlePay}
+                    isLoading={actionLoading}
+                    disabled={
+                      (paymentAttemptPending && actionLoading)
+                      || (!isRazorpayCheckoutEnabled() && !isMockPaymentEnabled())
+                      || (isRazorpayCheckoutEnabled() && (!booking.amount || booking.amount <= 0))
+                    }
+                  >
+                    {error ? (
+                      <>
+                        <RefreshCw size={15} />
+                        Retry Payment
+                      </>
+                    ) : (
+                      <>
+                        {isRazorpayCheckoutEnabled()
+                          ? `Pay ₹${booking.amount?.toFixed(2) ?? '—'} with Razorpay`
+                          : isMockPaymentEnabled()
+                            ? `Pay ${booking.amount != null ? `₹${booking.amount.toFixed(2)}` : 'Unavailable'} & Confirm`
+                            : 'Payments unavailable'}
+                        <CheckCircle2 size={16} />
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
             </div>
           ) : step === 'confirmed' && payment ? (
@@ -592,8 +670,14 @@ export function SeatSelectionModal({
               </p>
 
               <div className="my-5 mx-auto max-w-sm rounded-xl border border-surface-border bg-surface-subtle/40 p-4 text-left text-xs space-y-2">
+                {booking?.pnr && (
+                  <div className="flex justify-between">
+                    <span className="text-ink-muted">PNR:</span>
+                    <span className="font-mono font-bold text-navy-700">{booking.pnr}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span className="text-ink-muted">PNR / Ref:</span>
+                  <span className="text-ink-muted">Booking Ref:</span>
                   <span className="font-mono font-bold text-navy-700">{payment.bookingRef}</span>
                 </div>
                 <div className="flex justify-between">
@@ -629,6 +713,38 @@ export function SeatSelectionModal({
           ) : null}
         </div>
       </div>
+
+      {showSimulatedModal && booking && (
+        <SimulatedCheckoutModal
+          isOpen={showSimulatedModal}
+          onClose={() => setShowSimulatedModal(false)}
+          bookingRef={booking.bookingRef}
+          initialSummary={{
+            bookingRef: booking.bookingRef,
+            bookingId: booking.bookingId,
+            pnr: booking.pnr,
+            trainNumber: train.trainNumber,
+            trainName: train.trainName,
+            fromStationCode: train.fromStationCode,
+            fromStationName: train.fromStationName,
+            toStationCode: train.toStationCode,
+            toStationName: train.toStationName,
+            journeyDate: travelDate,
+            departureTime: train.fromDepartureTime ?? null,
+            arrivalTime: train.toArrivalTime ?? null,
+            coachNumber: booking.coachNumber,
+            seatNumber: booking.seatNumber,
+            amount: booking.amount,
+            bookingStatus: booking.bookingStatus,
+            paymentStatus: booking.paymentStatus,
+          }}
+          onSuccess={(res) => {
+            setShowSimulatedModal(false);
+            setPayment(res);
+            setStep('confirmed');
+          }}
+        />
+      )}
     </div>
   );
 }

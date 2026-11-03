@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { AlertTriangle, Train, ArrowRight, RefreshCw, Sparkles, Compass } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { TrainCard } from './TrainCard';
@@ -129,8 +130,11 @@ export function TrainList({
 
   // ── 4. Error State (Backend / Network Failure) ──
   if (isError) {
+    const responseMessage = axios.isAxiosError<{ message?: string }>(error)
+      ? error.response?.data?.message
+      : undefined;
     const errorMessage =
-      (error as any)?.response?.data?.message ||
+      responseMessage ||
       error?.message ||
       'Unable to connect to the railway search backend service. Please ensure the backend server is running on port 8080.';
 

@@ -110,14 +110,14 @@ export function TrainSearchForm({
               label="Origin Station"
               placeholder="e.g. HWH"
               value={from}
-              maxLength={5}
+              maxLength={30}
               onChange={(e) => {
                 setFrom(e.target.value.toUpperCase());
                 if (fromError) setFromError(null);
                 if (generalError) setGeneralError(null);
               }}
               error={fromError || undefined}
-              helperText="Enter 2–5 letter IR code"
+              helperText="Enter 2–30 character station code"
               leftIcon={<MapPin size={16} />}
               required
             />
@@ -151,14 +151,14 @@ export function TrainSearchForm({
               label="Destination Station"
               placeholder="e.g. NDLS"
               value={to}
-              maxLength={5}
+              maxLength={30}
               onChange={(e) => {
                 setTo(e.target.value.toUpperCase());
                 if (toError) setToError(null);
                 if (generalError) setGeneralError(null);
               }}
               error={toError || undefined}
-              helperText="Enter 2–5 letter IR code"
+              helperText="Enter 2–30 character station code"
               leftIcon={<MapPin size={16} />}
               required
             />

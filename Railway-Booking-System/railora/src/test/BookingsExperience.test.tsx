@@ -12,6 +12,7 @@ import BookingsPage from '@/pages/BookingsPage';
 vi.mock('@/features/booking/api', () => ({
   bookingApi: {
     getBookingHistory: vi.fn(),
+    getBookingByPnr: vi.fn(),
     payBooking: vi.fn(),
     cancelBooking: vi.fn(),
   },
@@ -56,6 +57,7 @@ const mockBookingsPageResponse: PageResponseDTO<BookingDetailResponseDTO> = {
     {
       bookingId: 101,
       bookingRef: 'BKG-20261026-MAS01',
+      pnr: '8492019482',
       userId: 1,
       username: 'passenger',
       journeyId: 10,
@@ -205,7 +207,9 @@ describe('BookingsPage experience', () => {
     expect(await screen.findByRole('heading', { name: 'My Bookings' })).toBeInTheDocument();
     expect(await screen.findByText('12601 — Mangalore Mail')).toBeInTheDocument();
     expect(await screen.findByText('12675 — Kovai Express')).toBeInTheDocument();
-    expect(screen.getByText(/PNR: BKG-20261026-MAS01/)).toBeInTheDocument();
+    expect(screen.getByText('PNR: 8492019482')).toBeInTheDocument();
+    expect(screen.getByText('Ref: BKG-20261026-MAS02')).toBeInTheDocument();
+    expect(screen.queryByText(/PNR: BKG-20261026-MAS01/)).not.toBeInTheDocument();
     expect(screen.getByText('Coach B1, #24')).toBeInTheDocument();
     expect(screen.getByText('CONFIRMED')).toBeInTheDocument();
 
@@ -353,6 +357,7 @@ describe('BookingsPage experience', () => {
     const modal = await screen.findByRole('dialog');
     expect(modal).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /confirm cancellation/i })).toBeInTheDocument();
+    expect(screen.getByText('8492019482')).toBeInTheDocument();
     expect(screen.getByText(/automated refunds are not supported/i)).toBeInTheDocument();
 
     // Dismiss by clicking Keep Booking
@@ -433,5 +438,35 @@ describe('BookingsPage experience', () => {
     fireEvent.click(confirmBtn);
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/booking has already been cancelled/i);
+  });
+
+  it('switches to PNR Status Enquiry tab and allows PNR lookup', async () => {
+    setSession(testTokens);
+    mockedBookingApi.getBookingHistory.mockResolvedValueOnce(mockBookingsPageResponse);
+    mockedBookingApi.getBookingByPnr.mockResolvedValueOnce(mockBookingsPageResponse.content[0]);
+
+    render(
+      <MemoryRouter initialEntries={['/bookings']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bookings" element={<BookingsPage />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'My Bookings' })).toBeInTheDocument();
+
+    // Switch to PNR Status Enquiry tab
+    const pnrTab = screen.getByRole('tab', { name: /pnr status enquiry/i });
+    fireEvent.click(pnrTab);
+
+    // Input PNR and check status
+    const input = await screen.findByLabelText(/enter 10-digit pnr number/i);
+    fireEvent.change(input, { target: { value: '8492019482' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /check status/i }));
+    expect(mockedBookingApi.getBookingByPnr).toHaveBeenCalledWith('8492019482');
+    expect(await screen.findByText('12601 — Mangalore Mail')).toBeInTheDocument();
   });
 });

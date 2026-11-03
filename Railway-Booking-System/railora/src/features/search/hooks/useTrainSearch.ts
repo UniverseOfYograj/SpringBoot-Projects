@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import axios from 'axios';
 import { searchTrains } from '../api';
 import { validateStationCode } from '../utils';
 import type { TrainSearchResponseDTO } from '../types';
@@ -34,13 +35,18 @@ export function useTrainSearch(
     queryFn: ({ signal }) => searchTrains(normalizedFrom, normalizedTo, signal),
     enabled: isExplicitlyEnabled && canExecute,
     staleTime: 5 * 60 * 1000, // Timetable data is stable for 5 minutes
-    retry: (failureCount, error: any) => {
+    retry: (failureCount, error) => {
       // Don't retry aborted/cancelled requests
       if (error?.name === 'CanceledError' || error?.name === 'AbortError') {
         return false;
       }
       // Don't retry client 4xx validation errors; retry 1x on network/5xx
-      if (error?.response?.status && error.response.status >= 400 && error.response.status < 500) {
+      if (
+        axios.isAxiosError(error) &&
+        error.response?.status &&
+        error.response.status >= 400 &&
+        error.response.status < 500
+      ) {
         return false;
       }
       return failureCount < 1;

@@ -7,6 +7,7 @@ import { useAuth } from '@/features/auth/AuthContext';
 const NAV_LINKS = [
   { label: 'Search Trains', href: ROUTES.SEARCH },
   { label: 'My Bookings', href: ROUTES.BOOKINGS },
+  { label: 'PNR Status', href: `${ROUTES.BOOKINGS}?tab=pnr` },
   { label: 'Tatkal Queue', href: ROUTES.WAITING_ROOM },
 ] as const;
 

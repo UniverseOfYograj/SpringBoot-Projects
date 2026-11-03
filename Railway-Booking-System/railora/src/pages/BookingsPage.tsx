@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Train,
   Calendar,
@@ -11,6 +11,7 @@ import {
   ArrowRight,
   RefreshCw,
   User,
+  Search,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -18,12 +19,23 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { useAuth } from '@/features/auth/AuthContext';
 import { bookingApi } from '@/features/booking/api';
 import { clearPaymentAttempt, getOrCreatePaymentAttempt } from '@/features/booking/paymentAttempt';
+import {
+  isMockPaymentEnabled,
+  isRazorpayCheckoutEnabled,
+  isSimulatedPaymentEnabled,
+  openRazorpayCheckout,
+} from '@/features/booking/razorpayCheckout';
+import { PnrEnquiry } from '@/features/booking/components/PnrEnquiry';
+import { SimulatedCheckoutModal } from '@/features/booking/components/SimulatedCheckoutModal';
 import type { BookingDetailResponseDTO } from '@/features/booking/types';
 import { ROUTES } from '@/lib/constants';
 
 export default function BookingsPage() {
   const { state: authState } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab') === 'pnr' ? 'pnr' : 'history';
+  const initialPnr = searchParams.get('pnr') || undefined;
 
   const [bookings, setBookings] = useState<BookingDetailResponseDTO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +44,7 @@ export default function BookingsPage() {
   const [payingRef, setPayingRef] = useState<string | null>(null);
   const [cancellingRef, setCancellingRef] = useState<string | null>(null);
   const [confirmCancelBooking, setConfirmCancelBooking] = useState<BookingDetailResponseDTO | null>(null);
+  const [simulatedCheckoutBooking, setSimulatedCheckoutBooking] = useState<BookingDetailResponseDTO | null>(null);
   const paymentsInFlight = useRef(new Set<string>());
 
   async function loadBookings() {
@@ -62,6 +75,27 @@ export default function BookingsPage() {
     setPayingRef(bookingRef);
     setError(null);
     try {
+      if (isRazorpayCheckoutEnabled()) {
+        const booking = bookings.find((item) => item.bookingRef === bookingRef);
+        if (!booking?.amount || booking.amount <= 0) {
+          throw new Error('A server-calculated fare is not available for this booking yet.');
+        }
+        const order = await bookingApi.createRazorpayOrder(bookingRef);
+        const checkoutResponse = await openRazorpayCheckout(order);
+        const verification = await bookingApi.verifyRazorpayPayment(bookingRef, checkoutResponse);
+        await loadBookings();
+        if (verification.paymentStatus === 'SUCCESS' && verification.bookingStatus === 'CONFIRMED') {
+          setSuccessMessage(`Payment for ${bookingRef} was verified and the booking is confirmed.`);
+        } else {
+          setError(verification.message || 'Payment is pending confirmation. Refresh your booking status shortly.');
+        }
+        return;
+      }
+
+      if (!isMockPaymentEnabled()) {
+        throw new Error('No payment provider is configured for this environment.');
+      }
+
       const attempt = getOrCreatePaymentAttempt(bookingRef, false);
       const res = await bookingApi.payBooking(bookingRef, attempt);
 
@@ -179,90 +213,166 @@ export default function BookingsPage() {
         </div>
       </div>
 
-      {error && (
-        <div
-          role="alert"
-          className="mt-6 flex items-center justify-between rounded-xl border border-status-danger-border bg-status-danger-bg p-4 text-sm text-status-danger-text"
+      {/* Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-surface-border mt-6 pb-px" role="tablist" aria-label="Bookings navigation">
+        <button
+          type="button"
+          onClick={() => {
+            const next = new URLSearchParams(searchParams);
+            next.delete('tab');
+            next.delete('pnr');
+            setSearchParams(next);
+          }}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-interact ${
+            currentTab === 'history'
+              ? 'border-teal-600 text-teal-700 bg-teal-50/40 rounded-t-lg'
+              : 'border-transparent text-ink-muted hover:text-ink-primary hover:border-surface-border'
+          }`}
+          aria-selected={currentTab === 'history'}
+          role="tab"
+          id="tab-history"
+          aria-controls="panel-history"
         >
-          <div className="flex items-center gap-2">
-            <AlertCircle size={18} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setError(null)}
-            className="text-status-danger-text/80 hover:text-status-danger-text text-xs font-semibold underline"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+          <Ticket size={16} />
+          <span>My Bookings</span>
+          <Badge variant={currentTab === 'history' ? 'teal' : 'neutral'} size="sm">
+            {bookings.length}
+          </Badge>
+        </button>
 
-      {successMessage && (
-        <div
-          role="status"
-          className="mt-6 flex items-center justify-between rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-800"
+        <button
+          type="button"
+          onClick={() => {
+            const next = new URLSearchParams(searchParams);
+            next.set('tab', 'pnr');
+            setSearchParams(next);
+          }}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-interact ${
+            currentTab === 'pnr'
+              ? 'border-teal-600 text-teal-700 bg-teal-50/40 rounded-t-lg'
+              : 'border-transparent text-ink-muted hover:text-ink-primary hover:border-surface-border'
+          }`}
+          aria-selected={currentTab === 'pnr'}
+          role="tab"
+          id="tab-pnr"
+          aria-controls="panel-pnr"
         >
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={18} className="text-teal-600 shrink-0" />
-            <span>{successMessage}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setSuccessMessage(null)}
-            className="text-teal-700/80 hover:text-teal-800 text-xs font-semibold underline"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+          <Search size={16} />
+          <span>PNR Status Enquiry</span>
+        </button>
+      </div>
 
-      {loading ? (
-        <div className="py-20 text-center">
-          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
-          <p className="mt-3 text-sm text-ink-muted">Loading your bookings…</p>
-        </div>
-      ) : bookings.length === 0 ? (
-        <div className="mt-12 rounded-2xl border border-dashed border-surface-border p-12 text-center bg-surface-card">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500 mb-3">
-            <Ticket size={24} />
-          </div>
-          <h2 className="text-lg font-bold text-ink-primary">No bookings found</h2>
-          <p className="mt-1 text-sm text-ink-muted">
-            You don't have any booked journeys yet. Search available trains to make your first reservation.
-          </p>
-          <div className="mt-6">
-            <Link to={ROUTES.SEARCH}>
-              <Button variant="accent" size="md">
-                Search Trains
-                <ArrowRight size={15} />
-              </Button>
-            </Link>
-          </div>
+      {currentTab === 'pnr' ? (
+        <div id="panel-pnr" role="tabpanel" aria-labelledby="tab-pnr" className="mt-6">
+          <PnrEnquiry
+            initialPnr={initialPnr}
+            onClear={() => {
+              const next = new URLSearchParams(searchParams);
+              next.delete('pnr');
+              setSearchParams(next);
+            }}
+          />
         </div>
       ) : (
-        <div className="mt-6 space-y-4">
-          {bookings.map((b) => {
-            const isConfirmed = b.bookingStatus === 'CONFIRMED';
-            const isPendingPayment = b.bookingStatus === 'PENDING_PAYMENT';
-            const isCancelled = b.bookingStatus === 'CANCELLED';
-
-            return (
-              <Card
-                key={b.bookingId}
-                className="overflow-hidden border border-surface-border hover:shadow-card transition-interact"
+        <div id="panel-history" role="tabpanel" aria-labelledby="tab-history">
+          {error && (
+            <div
+              role="alert"
+              className="mt-6 flex items-center justify-between rounded-xl border border-status-danger-border bg-status-danger-bg p-4 text-sm text-status-danger-text"
+            >
+              <div className="flex items-center gap-2">
+                <AlertCircle size={18} className="shrink-0" />
+                <span>{error}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="text-status-danger-text/80 hover:text-status-danger-text text-xs font-semibold underline"
               >
-                <CardContent className="p-5 sm:p-6">
-                  {/* Card top banner */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border/60 pb-4">
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-xs font-bold text-navy-700 bg-navy-50 border border-navy-200 px-2.5 py-1 rounded-md">
-                        PNR: {b.bookingRef}
-                      </span>
-                      <span className="font-bold text-ink-primary text-base">
-                        {b.trainNumber} — {b.trainName}
-                      </span>
-                    </div>
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {successMessage && (
+            <div
+              role="status"
+              className="mt-6 flex items-center justify-between rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-800"
+            >
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={18} className="text-teal-600 shrink-0" />
+                <span>{successMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSuccessMessage(null)}
+                className="text-teal-700/80 hover:text-teal-800 text-xs font-semibold underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="py-20 text-center">
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
+              <p className="mt-3 text-sm text-ink-muted">Loading your bookings…</p>
+            </div>
+          ) : bookings.length === 0 ? (
+            <div className="mt-12 rounded-2xl border border-dashed border-surface-border p-12 text-center bg-surface-card">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500 mb-3">
+                <Ticket size={24} />
+              </div>
+              <h2 className="text-lg font-bold text-ink-primary">No bookings found</h2>
+              <p className="mt-1 text-sm text-ink-muted">
+                You don't have any booked journeys yet. Search available trains to make your first reservation.
+              </p>
+              <div className="mt-6">
+                <Link to={ROUTES.SEARCH}>
+                  <Button variant="accent" size="md">
+                    Search Trains
+                    <ArrowRight size={15} />
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-6 space-y-4">
+              {bookings.map((b) => {
+                const isConfirmed = b.bookingStatus === 'CONFIRMED';
+                const isPendingPayment = b.bookingStatus === 'PENDING_PAYMENT';
+                const isCancelled = b.bookingStatus === 'CANCELLED';
+
+                return (
+                  <Card
+                    key={b.bookingId}
+                    className="overflow-hidden border border-surface-border hover:shadow-card transition-interact"
+                  >
+                    <CardContent className="p-5 sm:p-6">
+                      {/* Card top banner */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border/60 pb-4">
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (b.pnr) {
+                                const next = new URLSearchParams(searchParams);
+                                next.set('tab', 'pnr');
+                                next.set('pnr', b.pnr);
+                                setSearchParams(next);
+                              }
+                            }}
+                            title={b.pnr ? 'Check PNR Status' : undefined}
+                            className={`font-mono text-xs font-bold text-navy-700 bg-navy-50 border border-navy-200 px-2.5 py-1 rounded-md ${
+                              b.pnr ? 'hover:bg-navy-100 cursor-pointer transition-colors' : ''
+                            }`}
+                          >
+                            {b.pnr ? `PNR: ${b.pnr}` : `Ref: ${b.bookingRef}`}
+                          </button>
+                          <span className="font-bold text-ink-primary text-base">
+                            {b.trainNumber} — {b.trainName}
+                          </span>
+                        </div>
 
                     <div className="flex items-center gap-2">
                       <Badge
@@ -338,7 +448,7 @@ export default function BookingsPage() {
                       <div className="flex items-center justify-between sm:justify-start sm:gap-2 mt-1">
                         <span className="text-xs text-ink-muted">Amount:</span>
                         <span className="font-mono text-sm font-bold text-teal-700">
-                          ₹{b.amount?.toFixed(2) ?? '500.00'}
+                          {b.amount != null ? `₹${b.amount.toFixed(2)}` : 'Unavailable'}
                         </span>
                       </div>
                     </div>
@@ -360,15 +470,36 @@ export default function BookingsPage() {
                         >
                           Cancel Booking
                         </Button>
-                        <Button
-                          variant="accent"
-                          size="sm"
-                          onClick={() => handleCompletePayment(b.bookingRef)}
-                          isLoading={payingRef === b.bookingRef}
-                        >
-                          <CreditCard size={14} />
-                          Pay Now
-                        </Button>
+                        {isSimulatedPaymentEnabled() && (
+                          <Button
+                            variant="accent"
+                            size="sm"
+                            onClick={() => setSimulatedCheckoutBooking(b)}
+                            aria-label={`Demo checkout for ${b.bookingRef}`}
+                          >
+                            <CreditCard size={14} />
+                            Demo Checkout
+                          </Button>
+                        )}
+                        {!isSimulatedPaymentEnabled() && (
+                          <Button
+                            variant="accent"
+                            size="sm"
+                            onClick={() => handleCompletePayment(b.bookingRef)}
+                            isLoading={payingRef === b.bookingRef}
+                            disabled={
+                              (!isRazorpayCheckoutEnabled() && !isMockPaymentEnabled())
+                              || (isRazorpayCheckoutEnabled() && (!b.amount || b.amount <= 0))
+                            }
+                          >
+                            <CreditCard size={14} />
+                            {isRazorpayCheckoutEnabled()
+                              ? 'Pay with Razorpay'
+                              : isMockPaymentEnabled()
+                                ? 'Pay Now'
+                                : 'Payments unavailable'}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -402,6 +533,8 @@ export default function BookingsPage() {
           })}
         </div>
       )}
+    </div>
+  )}
 
       {/* Cancellation Confirmation Modal */}
       {confirmCancelBooking && (
@@ -440,7 +573,15 @@ export default function BookingsPage() {
 
               <div className="rounded-xl border border-surface-border bg-surface-muted p-3 text-xs space-y-1.5 font-mono text-ink-secondary">
                 <div>
-                  PNR: <strong className="text-navy-700">{confirmCancelBooking.bookingRef}</strong>
+                  {confirmCancelBooking.pnr ? (
+                    <>
+                      PNR: <strong className="text-navy-700">{confirmCancelBooking.pnr}</strong>
+                    </>
+                  ) : (
+                    <>
+                      Ref: <strong className="text-navy-700">{confirmCancelBooking.bookingRef}</strong>
+                    </>
+                  )}
                 </div>
                 <div>
                   Route: {confirmCancelBooking.fromStationCode} → {confirmCancelBooking.toStationCode} on{' '}
@@ -486,6 +627,43 @@ export default function BookingsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Simulated Demo Checkout Modal */}
+      {simulatedCheckoutBooking && (
+        <SimulatedCheckoutModal
+          isOpen={Boolean(simulatedCheckoutBooking)}
+          onClose={() => setSimulatedCheckoutBooking(null)}
+          bookingRef={simulatedCheckoutBooking.bookingRef}
+          initialSummary={{
+            bookingRef: simulatedCheckoutBooking.bookingRef,
+            bookingId: simulatedCheckoutBooking.bookingId,
+            pnr: simulatedCheckoutBooking.pnr,
+            journeyId: simulatedCheckoutBooking.journeyId,
+            trainNumber: simulatedCheckoutBooking.trainNumber,
+            trainName: simulatedCheckoutBooking.trainName,
+            fromStationCode: simulatedCheckoutBooking.fromStationCode,
+            fromStationName: simulatedCheckoutBooking.fromStationName,
+            toStationCode: simulatedCheckoutBooking.toStationCode,
+            toStationName: simulatedCheckoutBooking.toStationName,
+            journeyDate: simulatedCheckoutBooking.journeyDate,
+            departureTime: simulatedCheckoutBooking.departureTime,
+            arrivalTime: simulatedCheckoutBooking.arrivalTime,
+            coachNumber: simulatedCheckoutBooking.coachNumber,
+            coachType: simulatedCheckoutBooking.coachType,
+            seatNumber: simulatedCheckoutBooking.seatNumber,
+            seatType: simulatedCheckoutBooking.seatType,
+            amount: simulatedCheckoutBooking.amount,
+            bookingStatus: simulatedCheckoutBooking.bookingStatus,
+            paymentStatus: simulatedCheckoutBooking.paymentStatus,
+          }}
+          onSuccess={() => {
+            void loadBookings();
+          }}
+          onFailure={() => {
+            void loadBookings();
+          }}
+        />
       )}
     </section>
   );

@@ -193,6 +193,7 @@ describe('booking API client', () => {
     const mockBooking = {
       bookingId: 77,
       bookingRef: 'BKG-20261026-0001',
+      pnr: '8492019482',
       journeyId: 10,
       seatId: 101,
       coachNumber: 'B1',
@@ -263,5 +264,41 @@ describe('booking API client', () => {
     expect(mockGet).toHaveBeenCalledWith('/bookings', {
       params: { page: 0, size: 10 },
     });
+  });
+
+  it('fetches single booking details by 10-digit PNR', async () => {
+    const mockDetail = {
+      bookingId: 77,
+      bookingRef: 'BKG-20261026-0001',
+      pnr: '8492019482',
+      userId: 1,
+      username: 'passenger',
+      journeyId: 10,
+      trainNumber: '12601',
+      trainName: 'Mangalore Mail',
+      fromStationCode: 'MAS',
+      fromStationName: 'Chennai Central',
+      toStationCode: 'SBC',
+      toStationName: 'Bangalore City',
+      journeyDate: '2026-10-27',
+      departureTime: '20:15:00',
+      arrivalTime: '04:30:00',
+      coachId: 1,
+      coachNumber: 'B1',
+      coachType: 'AC_3_TIER',
+      seatId: 101,
+      seatNumber: 12,
+      seatType: 'LOWER',
+      seatAllocationId: 701,
+      bookingStatus: 'CONFIRMED',
+      paymentStatus: 'SUCCESS',
+      amount: 500.0,
+      createdAt: '2026-10-26T12:00:00',
+    };
+    mockGet.mockResolvedValueOnce(response(mockDetail));
+
+    const result = await bookingApi.getBookingByPnr('8492019482');
+    expect(result).toEqual(mockDetail);
+    expect(mockGet).toHaveBeenCalledWith('/bookings/pnr/8492019482');
   });
 });

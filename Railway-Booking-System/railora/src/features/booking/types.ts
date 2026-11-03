@@ -45,19 +45,21 @@ export interface CreateBookingRequestDTO {
 export interface BookingResponseDTO {
   bookingId: number;
   bookingRef: string;
+  pnr?: string | null;
   journeyId: number;
   seatId: number;
   coachNumber: string;
   seatNumber: number;
   bookingStatus: 'PENDING_PAYMENT' | 'CONFIRMED' | 'CANCELLED' | string;
   paymentStatus: 'PENDING' | 'SUCCESS' | 'FAILED' | string;
-  amount: number;
+  amount: number | null;
   createdAt: string;
 }
 
 export interface BookingDetailResponseDTO {
   bookingId: number;
   bookingRef: string;
+  pnr?: string | null;
   userId: number;
   username: string;
   journeyId: number;
@@ -79,7 +81,7 @@ export interface BookingDetailResponseDTO {
   seatAllocationId: number;
   bookingStatus: 'PENDING_PAYMENT' | 'CONFIRMED' | 'CANCELLED' | string;
   paymentStatus: 'PENDING' | 'SUCCESS' | 'FAILED' | string;
-  amount: number;
+  amount: number | null;
   createdAt: string;
 }
 
@@ -99,6 +101,59 @@ export interface PaymentResponseDTO {
   paymentMethod: string;
   message: string;
   transactionTime: string;
+}
+
+export interface SimulatedPaymentSummaryDTO {
+  bookingRef: string;
+  bookingId: number;
+  pnr: string | null;
+  journeyId: number | null;
+  trainNumber: string | null;
+  trainName: string | null;
+  fromStationCode: string | null;
+  fromStationName: string | null;
+  toStationCode: string | null;
+  toStationName: string | null;
+  journeyDate: string | null;
+  departureTime: string | null;
+  arrivalTime: string | null;
+  coachNumber: string | null;
+  coachType: string | null;
+  seatNumber: number | null;
+  seatType: string | null;
+  amount: number | null;
+  bookingStatus: string;
+  paymentStatus: string;
+  holdExpiresAt: string | null;
+  mode: string;
+}
+
+export interface SimulatedPaymentRequestDTO {
+  idempotencyKey?: string;
+  reason?: string;
+}
+
+export interface RazorpayOrderResponseDTO {
+  orderId: string;
+  keyId: string;
+  bookingRef: string;
+  amount: number;
+  currency: 'INR';
+  transactionRef: string;
+}
+
+export interface RazorpayCheckoutResponse {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+export interface RazorpayPaymentStatusDTO {
+  transactionRef: string;
+  bookingRef: string;
+  paymentStatus: string;
+  bookingStatus: string;
+  message: string;
 }
 
 export interface PageResponseDTO<T> {

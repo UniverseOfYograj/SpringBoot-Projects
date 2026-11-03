@@ -95,8 +95,8 @@ export function calculateDuration(
  * Validates a single Indian Railways station code.
  * Rules:
  * - Must not be empty
- * - 2 to 5 characters long
- * - Letters only
+ * - 2 to 30 characters long (matching backend VARCHAR(30))
+ * - Uppercase letters and digits only
  */
 export function validateStationCode(code: string): string | null {
   const trimmed = code.trim().toUpperCase();
@@ -106,11 +106,11 @@ export function validateStationCode(code: string): string | null {
   if (trimmed.length < 2) {
     return 'Station code must be at least 2 characters';
   }
-  if (trimmed.length > 5) {
-    return 'Station code cannot exceed 5 characters';
+  if (trimmed.length > 30) {
+    return 'Station code cannot exceed 30 characters';
   }
-  if (!/^[A-Z]+$/.test(trimmed)) {
-    return 'Station code must contain letters only';
+  if (!/^[A-Z0-9]+$/.test(trimmed)) {
+    return 'Station code must contain letters and numbers only';
   }
   return null;
 }

@@ -4,14 +4,14 @@ import { getAccessToken } from '@/features/auth/session';
 /**
  * Centralized Axios API client.
  *
- * All requests are made to relative `/api/...` paths.
+ * Requests use the configured Vite API base URL or relative `/api/...` paths.
  * In development, Vite proxies them to http://localhost:8080.
- * In production, the web server must handle the same rewrite.
+ * In production, the default `/api` path must be handled by the web server.
  *
  * Access tokens are attached from the in-memory authentication session.
  */
 const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   headers: {
     'Content-Type': 'application/json',
     Accept: 'application/json',
