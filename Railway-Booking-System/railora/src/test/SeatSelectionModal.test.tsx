@@ -9,6 +9,12 @@ import { SeatSelectionModal } from '@/features/booking/components/SeatSelectionM
 import type { TrainSearchResponseDTO } from '@/features/search/types';
 import type { AuthResponse, UserResponse } from '@/features/auth/types';
 
+import {
+  isMockPaymentEnabled,
+  isRazorpayCheckoutEnabled,
+  isSimulatedPaymentEnabled,
+} from '@/features/booking/razorpayCheckout';
+
 vi.mock('@/features/booking/api', () => ({
   bookingApi: {
     getJourneys: vi.fn(),
@@ -17,8 +23,20 @@ vi.mock('@/features/booking/api', () => ({
     holdSeat: vi.fn(),
     createBooking: vi.fn(),
     payBooking: vi.fn(),
+    getSimulatedPaymentSummary: vi.fn(),
+    simulatePaymentSuccess: vi.fn(),
   },
 }));
+
+vi.mock('@/features/booking/razorpayCheckout', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/booking/razorpayCheckout')>();
+  return {
+    ...actual,
+    isRazorpayCheckoutEnabled: vi.fn(() => false),
+    isMockPaymentEnabled: vi.fn(() => true),
+    isSimulatedPaymentEnabled: vi.fn(() => false),
+  };
+});
 
 vi.mock('@/features/auth/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/auth/api')>();
@@ -35,6 +53,9 @@ vi.mock('@/features/auth/api', async (importOriginal) => {
 
 const mockedBookingApi = vi.mocked(bookingApi);
 const mockedAuthApi = vi.mocked(authApi);
+const mockedIsRazorpayCheckoutEnabled = vi.mocked(isRazorpayCheckoutEnabled);
+const mockedIsMockPaymentEnabled = vi.mocked(isMockPaymentEnabled);
+const mockedIsSimulatedPaymentEnabled = vi.mocked(isSimulatedPaymentEnabled);
 
 const testTrain: TrainSearchResponseDTO = {
   trainId: 1,
@@ -74,6 +95,9 @@ beforeEach(() => {
   clearSession();
   sessionStorage.clear();
   vi.clearAllMocks();
+  mockedIsRazorpayCheckoutEnabled.mockReturnValue(false);
+  mockedIsMockPaymentEnabled.mockReturnValue(true);
+  mockedIsSimulatedPaymentEnabled.mockReturnValue(false);
   mockedAuthApi.getCurrentUser.mockResolvedValue(testUser);
 });
 
@@ -321,6 +345,9 @@ describe('SeatSelectionModal component', () => {
     // 5. Reaches confirmed step
     expect(await screen.findByRole('heading', { name: /booking confirmed!/i })).toBeInTheDocument();
     expect(screen.getByText('TXN-SUCCESS-99')).toBeInTheDocument();
+    expect(screen.getByText('Payment Mode:')).toBeInTheDocument();
+    expect(screen.getByText('MOCK_UPI')).toBeInTheDocument();
+    expect(screen.queryByText(/SIMULATED \(Demo\)/i)).not.toBeInTheDocument();
     expect(mockedBookingApi.payBooking).toHaveBeenCalledWith(
       'BKG-20261027-MAS01',
       expect.objectContaining({
@@ -639,5 +666,191 @@ describe('SeatSelectionModal component', () => {
     expect(localStorage.getItem('admissionPass')).toBeNull();
     expect(sessionStorage.getItem('admissionToken')).toBeNull();
     expect(sessionStorage.getItem('admissionPass')).toBeNull();
+  });
+
+  it('renders "Demo Checkout (Simulated Gateway)" helper text and button when simulated payment is enabled, and displays "Payment Mode: SIMULATED (Demo)" on confirmed card', async () => {
+    setSession(testTokens);
+    mockedIsSimulatedPaymentEnabled.mockReturnValue(true);
+    mockedIsRazorpayCheckoutEnabled.mockReturnValue(false);
+    mockedIsMockPaymentEnabled.mockReturnValue(false);
+
+    mockedBookingApi.getJourneys.mockResolvedValueOnce([
+      {
+        journeyId: 10,
+        trainId: 1,
+        trainNumber: '12601',
+        trainName: 'Mangalore Mail',
+        fromStationId: 1,
+        fromStationCode: 'MAS',
+        fromStationName: 'Chennai Central',
+        toStationId: 2,
+        toStationCode: 'SBC',
+        toStationName: 'Bangalore City',
+        journeyDate: '2026-10-27',
+        departureTime: '20:15:00',
+        arrivalTime: '04:30:00',
+        routeId: 100,
+        distanceKm: 360,
+        status: 'SCHEDULED',
+        tatkalQuotaTotal: 50,
+        tatkalQuotaAvailable: 25,
+        tatkalQuotaUsed: 25,
+      },
+    ]);
+
+    mockedBookingApi.getJourneyStops.mockResolvedValueOnce([
+      {
+        journeyStopId: 101,
+        journeyId: 10,
+        stationId: 1,
+        stationCode: 'MAS',
+        stationName: 'Chennai Central',
+        stopSequence: 1,
+        arrivalTime: null,
+        departureTime: '20:15:00',
+        platformNumber: '1',
+        isBoardingAllowed: true,
+        isAlightingAllowed: false,
+      },
+      {
+        journeyStopId: 102,
+        journeyId: 10,
+        stationId: 2,
+        stationCode: 'SBC',
+        stationName: 'Bangalore City',
+        stopSequence: 2,
+        arrivalTime: '04:30:00',
+        departureTime: null,
+        platformNumber: '2',
+        isBoardingAllowed: false,
+        isAlightingAllowed: true,
+      },
+    ]);
+
+    mockedBookingApi.getJourneySeats.mockResolvedValueOnce([
+      {
+        inventoryId: 1,
+        journeyId: 10,
+        coachId: 1,
+        coachNumber: 'B1',
+        seatId: 501,
+        seatNumber: 12,
+        seatType: 'LOWER',
+        status: 'AVAILABLE',
+      },
+    ]);
+
+    mockedBookingApi.holdSeat.mockResolvedValueOnce({
+      inventoryId: 1,
+      seatId: 501,
+      status: 'HOLD',
+      holdExpiresAt: '2026-10-27T20:25:00',
+      message: 'Hold acquired',
+    });
+
+    mockedBookingApi.createBooking.mockResolvedValueOnce({
+      bookingId: 88,
+      bookingRef: 'BKG-20261027-SIM01',
+      pnr: '8492019482',
+      journeyId: 10,
+      seatId: 501,
+      coachNumber: 'B1',
+      seatNumber: 12,
+      bookingStatus: 'PENDING_PAYMENT',
+      paymentStatus: 'PENDING',
+      amount: 500.0,
+      createdAt: '2026-10-27T20:15:00',
+    });
+
+    mockedBookingApi.getSimulatedPaymentSummary.mockResolvedValueOnce({
+      bookingRef: 'BKG-20261027-SIM01',
+      bookingId: 88,
+      pnr: '8492019482',
+      journeyId: 10,
+      trainNumber: '12601',
+      trainName: 'Mangalore Mail',
+      fromStationCode: 'MAS',
+      fromStationName: 'Chennai Central',
+      toStationCode: 'SBC',
+      toStationName: 'Bangalore City',
+      journeyDate: '2026-10-27',
+      departureTime: '20:15:00',
+      arrivalTime: '04:30:00',
+      coachNumber: 'B1',
+      coachType: '3A',
+      seatNumber: 12,
+      seatType: 'LOWER',
+      amount: 500.0,
+      bookingStatus: 'PENDING_PAYMENT',
+      paymentStatus: 'PENDING',
+      holdExpiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      mode: 'SIMULATED',
+    });
+
+    mockedBookingApi.simulatePaymentSuccess.mockResolvedValueOnce({
+      transactionRef: 'SIM-TXN-SUCCESS-777',
+      bookingRef: 'BKG-20261027-SIM01',
+      bookingId: 88,
+      amount: 500.0,
+      paymentStatus: 'SUCCESS',
+      bookingStatus: 'CONFIRMED',
+      paymentMethod: 'SIMULATED',
+      message: 'Simulated payment successful and booking confirmed',
+      transactionTime: '2026-10-27T20:16:00',
+    });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <SeatSelectionModal
+            isOpen={true}
+            onClose={vi.fn()}
+            train={testTrain}
+            travelDate="2026-10-27"
+          />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    // 1. Select seat #12
+    const seatBtn = await screen.findByText('#12');
+    fireEvent.click(seatBtn);
+
+    // 2. Click Hold & Proceed
+    const proceedBtn = screen.getByRole('button', { name: /hold & proceed/i });
+    fireEvent.click(proceedBtn);
+
+    // 3. Verify Payment Step in Simulated Mode
+    expect(await screen.findByRole('heading', { name: /confirm & pay/i })).toBeInTheDocument();
+
+    // Verify Helper Box communicates "Demo Checkout (Simulated Gateway)"
+    expect(screen.getByText('Demo Checkout (Simulated Gateway)')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Interactive payment simulation for demonstration\. No real money or bank accounts will be charged\./i,
+      ),
+    ).toBeInTheDocument();
+
+    // Verify no "Payments unavailable" misleading text
+    expect(screen.queryByText(/Payments unavailable/i)).not.toBeInTheDocument();
+
+    // Verify the checkout button communicates the same "Demo Checkout" mode
+    const demoCheckoutBtn = screen.getByRole('button', { name: /demo checkout/i });
+    expect(demoCheckoutBtn).toBeInTheDocument();
+
+    // 4. Click Demo Checkout to open SimulatedCheckoutModal
+    fireEvent.click(demoCheckoutBtn);
+
+    // 5. Complete simulated payment inside the modal
+    const simulateSuccessBtn = await screen.findByRole('button', {
+      name: /simulate successful payment/i,
+    });
+    fireEvent.click(simulateSuccessBtn);
+
+    // 6. Confirmed card in SeatSelectionModal explicitly displays Payment Mode: SIMULATED (Demo)
+    expect(await screen.findByRole('heading', { name: /booking confirmed!/i })).toBeInTheDocument();
+    expect(screen.getByText('SIM-TXN-SUCCESS-777')).toBeInTheDocument();
+    expect(screen.getByText('Payment Mode:')).toBeInTheDocument();
+    expect(screen.getByText('SIMULATED (Demo)')).toBeInTheDocument();
   });
 });

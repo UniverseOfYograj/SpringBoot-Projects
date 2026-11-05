@@ -585,16 +585,20 @@ export function SeatSelectionModal({
                   <CreditCard size={16} className="text-teal-700" />
                   {isRazorpayCheckoutEnabled()
                     ? 'Secure Payment (Razorpay Test Mode)'
-                    : isMockPaymentEnabled()
-                      ? 'Instant Payment (Mock Gateway)'
-                      : 'Payments unavailable'}
+                    : isSimulatedPaymentEnabled()
+                      ? 'Demo Checkout (Simulated Gateway)'
+                      : isMockPaymentEnabled()
+                        ? 'Instant Payment (Mock Gateway)'
+                        : 'Payments unavailable'}
                 </div>
                 <p className="text-xs text-teal-700 leading-relaxed">
                   {isRazorpayCheckoutEnabled()
                     ? 'Payment completion is verified by the Railora server before confirming your booking.'
-                    : isMockPaymentEnabled()
-                      ? 'Idempotent mock payment simulation verifying transaction isolation and double-spend protection.'
-                      : 'Payment processing is not configured. Please contact support.'}
+                    : isSimulatedPaymentEnabled()
+                      ? 'Interactive payment simulation for demonstration. No real money or bank accounts will be charged.'
+                      : isMockPaymentEnabled()
+                        ? 'Idempotent mock payment simulation verifying transaction isolation and double-spend protection.'
+                        : 'Payment processing is not configured. Please contact support.'}
                 </p>
               </div>
 
@@ -683,6 +687,14 @@ export function SeatSelectionModal({
                 <div className="flex justify-between">
                   <span className="text-ink-muted">Transaction ID:</span>
                   <span className="font-mono text-ink-primary">{payment.transactionRef}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-ink-muted">Payment Mode:</span>
+                  <span className={payment.paymentMethod?.toUpperCase() === 'SIMULATED' || payment.transactionRef?.startsWith('SIM-') ? 'font-semibold text-teal-700' : 'font-mono text-ink-primary'}>
+                    {payment.paymentMethod?.toUpperCase() === 'SIMULATED' || payment.transactionRef?.startsWith('SIM-')
+                      ? 'SIMULATED (Demo)'
+                      : (payment.paymentMethod || 'Standard')}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-ink-muted">Status:</span>
