@@ -689,41 +689,30 @@ describe('SeatSelectionModal component', () => {
         journeyDate: '2026-10-27',
         departureTime: '20:15:00',
         arrivalTime: '04:30:00',
-        routeId: 100,
-        distanceKm: 360,
-        status: 'SCHEDULED',
-        tatkalQuotaTotal: 50,
-        tatkalQuotaAvailable: 25,
-        tatkalQuotaUsed: 25,
+        trainRouteId: 1,
+        departureAt: '2026-10-27T20:15:00',
+        arrivalAt: '2026-10-28T04:30:00',
       },
     ]);
 
     mockedBookingApi.getJourneyStops.mockResolvedValueOnce([
       {
         journeyStopId: 101,
-        journeyId: 10,
         stationId: 1,
         stationCode: 'MAS',
         stationName: 'Chennai Central',
         stopSequence: 1,
-        arrivalTime: null,
-        departureTime: '20:15:00',
-        platformNumber: '1',
-        isBoardingAllowed: true,
-        isAlightingAllowed: false,
+        arrivalAt: null,
+        departureAt: '2026-10-27T20:15:00',
       },
       {
         journeyStopId: 102,
-        journeyId: 10,
         stationId: 2,
         stationCode: 'SBC',
         stationName: 'Bangalore City',
         stopSequence: 2,
-        arrivalTime: '04:30:00',
-        departureTime: null,
-        platformNumber: '2',
-        isBoardingAllowed: false,
-        isAlightingAllowed: true,
+        arrivalAt: '2026-10-28T04:30:00',
+        departureAt: null,
       },
     ]);
 
@@ -737,15 +726,28 @@ describe('SeatSelectionModal component', () => {
         seatNumber: 12,
         seatType: 'LOWER',
         status: 'AVAILABLE',
+        holdExpiresAt: null,
+        updatedAt: null,
+        seatAllocationId: null,
+        boardingJourneyStopId: 101,
+        alightingJourneyStopId: 102,
       },
     ]);
 
     mockedBookingApi.holdSeat.mockResolvedValueOnce({
       inventoryId: 1,
+      journeyId: 10,
+      coachId: 1,
+      coachNumber: 'B1',
       seatId: 501,
+      seatNumber: 12,
+      seatType: 'LOWER',
       status: 'HOLD',
       holdExpiresAt: '2026-10-27T20:25:00',
-      message: 'Hold acquired',
+      updatedAt: '2026-10-27T20:15:00',
+      seatAllocationId: 700,
+      boardingJourneyStopId: 101,
+      alightingJourneyStopId: 102,
     });
 
     mockedBookingApi.createBooking.mockResolvedValueOnce({
