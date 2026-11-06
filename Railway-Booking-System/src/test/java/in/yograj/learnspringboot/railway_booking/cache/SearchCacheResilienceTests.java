@@ -165,21 +165,13 @@ class SearchCacheResilienceTests {
         stTo.setStationCode("BCT");
         stTo.setStationName("Mumbai Central");
 
-        TrainStop fromStop = new TrainStop();
-        fromStop.setTrainRoute(route);
-        fromStop.setStation(stFrom);
-        fromStop.setDepartureTime(LocalTime.of(16, 55));
-        fromStop.setDayOffset(0);
-
-        TrainStop toStop = new TrainStop();
-        toStop.setTrainRoute(route);
-        toStop.setStation(stTo);
-        toStop.setArrivalTime(LocalTime.of(8, 35));
-        toStop.setDayOffset(1);
-
-        List<Object[]> rows = java.util.Collections.singletonList(new Object[]{fromStop, toStop});
+        TrainSearchResponseDTO dto = new TrainSearchResponseDTO(
+                501L, "12951", "Mumbai Rajdhani",
+                "NDLS", "New Delhi", null, LocalTime.of(16, 55), 0,
+                "BCT", "Mumbai Central", LocalTime.of(8, 35), null, 1
+        );
         when(trainStopRepository.findTrainStopsBetweenStations("NDLS", "BCT"))
-                .thenReturn(rows);
+                .thenReturn(List.of(dto));
 
         Cache cache = cacheManager.getCache(RedisCacheConfig.TRAIN_SEARCH_CACHE);
         assertNotNull(cache);

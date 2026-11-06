@@ -35,18 +35,21 @@ export function useTrainSearch(
     queryFn: ({ signal }) => searchTrains(normalizedFrom, normalizedTo, signal),
     enabled: isExplicitlyEnabled && canExecute,
     staleTime: 5 * 60 * 1000, // Timetable data is stable for 5 minutes
-    retry: (failureCount, error) => {
+    retry: (failureCount, error: any) => {
       // Don't retry aborted/cancelled requests
       if (error?.name === 'CanceledError' || error?.name === 'AbortError') {
         return false;
       }
-      // Don't retry client 4xx validation errors; retry 1x on network/5xx
+      // Don't retry timeout errors (Axios ECONNABORTED or timeout message) to prevent retry storms
       if (
-        axios.isAxiosError(error) &&
-        error.response?.status &&
-        error.response.status >= 400 &&
-        error.response.status < 500
+        (axios.isAxiosError(error) && (error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout'))) ||
+        error?.code === 'ECONNABORTED' ||
+        (typeof error?.message === 'string' && error.message.toLowerCase().includes('timeout'))
       ) {
+        return false;
+      }
+      // Don't retry client 4xx validation errors; retry 1x on network/5xx
+      if (error?.response?.status && error.response.status >= 400 && error.response.status < 500) {
         return false;
       }
       return failureCount < 1;

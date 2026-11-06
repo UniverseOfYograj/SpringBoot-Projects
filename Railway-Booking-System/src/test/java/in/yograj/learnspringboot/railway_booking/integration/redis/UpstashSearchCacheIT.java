@@ -339,20 +339,13 @@ class UpstashSearchCacheIT {
         stTo.setStationCode(toCode);
         stTo.setStationName("Test Mumbai Central");
 
-        TrainStop fromStop = new TrainStop();
-        fromStop.setTrainRoute(route);
-        fromStop.setStation(stFrom);
-        fromStop.setDepartureTime(LocalTime.of(17, 15));
-        fromStop.setDayOffset(0);
-
-        TrainStop toStop = new TrainStop();
-        toStop.setTrainRoute(route);
-        toStop.setStation(stTo);
-        toStop.setArrivalTime(LocalTime.of(10, 5));
-        toStop.setDayOffset(1);
-
-        List<Object[]> rows = Collections.singletonList(new Object[]{fromStop, toStop});
-        when(trainStopRepository.findTrainStopsBetweenStations(fromCode, toCode)).thenReturn(rows);
+        TrainSearchResponseDTO dto = new TrainSearchResponseDTO(
+                801L, "12953", "August Kranti Rajdhani",
+                fromCode, "Test From Station", null, LocalTime.of(17, 15), 0,
+                toCode, "Test To Station", LocalTime.of(10, 5), null, 1
+        );
+        when(trainStopRepository.findTrainStopsBetweenStations(fromCode, toCode))
+                .thenReturn(List.of(dto));
 
         // ------------------------------------------------------------------
         // Call 1: Cache Miss -> Queries repository and populates Upstash Redis
@@ -438,10 +431,20 @@ class UpstashSearchCacheIT {
         TrainStop stop2C = new TrainStop(); stop2C.setTrainRoute(route2); stop2C.setStation(stC);
         stop2C.setArrivalTime(LocalTime.of(15, 0)); stop2C.setDayOffset(0);
 
+        TrainSearchResponseDTO dto1 = new TrainSearchResponseDTO(
+                901L, "22436", "Vande Bharat Express",
+                route1From, "Station A", null, LocalTime.of(6, 0), 0,
+                route1To, "Station B", LocalTime.of(14, 0), null, 0
+        );
+        TrainSearchResponseDTO dto2 = new TrainSearchResponseDTO(
+                902L, "22437", "Tejas Express",
+                route2From, "Station A", null, LocalTime.of(7, 0), 0,
+                route2To, "Station C", LocalTime.of(15, 0), null, 0
+        );
         when(trainStopRepository.findTrainStopsBetweenStations(route1From, route1To))
-                .thenReturn(Collections.singletonList(new Object[]{stop1A, stop1B}));
+                .thenReturn(List.of(dto1));
         when(trainStopRepository.findTrainStopsBetweenStations(route2From, route2To))
-                .thenReturn(Collections.singletonList(new Object[]{stop2A, stop2C}));
+                .thenReturn(List.of(dto2));
 
         List<TrainSearchResponseDTO> res1 = trainSearchService.searchTrains(route1From, route1To);
         List<TrainSearchResponseDTO> res2 = trainSearchService.searchTrains(route2From, route2To);

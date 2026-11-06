@@ -1,5 +1,6 @@
 package in.yograj.learnspringboot.railway_booking.repository;
 
+import in.yograj.learnspringboot.railway_booking.dto.TrainSearchResponseDTO;
 import in.yograj.learnspringboot.railway_booking.entity.TrainStop;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -12,7 +13,21 @@ public interface TrainStopRepository extends JpaRepository<TrainStop, Long> {
     List<TrainStop> findByTrainRoute_TrainRouteIdOrderByStopSequence(Long trainRouteId);
 
     @Query("""
-            SELECT fromStop, toStop
+            SELECT new in.yograj.learnspringboot.railway_booking.dto.TrainSearchResponseDTO(
+                train.trainId,
+                train.trainNumber,
+                train.trainName,
+                fromStation.stationCode,
+                fromStation.stationName,
+                fromStop.arrivalTime,
+                fromStop.departureTime,
+                fromStop.dayOffset,
+                toStation.stationCode,
+                toStation.stationName,
+                toStop.arrivalTime,
+                toStop.departureTime,
+                toStop.dayOffset
+            )
             FROM TrainStop fromStop
             JOIN fromStop.trainRoute route
             JOIN route.train train
@@ -26,7 +41,7 @@ public interface TrainStopRepository extends JpaRepository<TrainStop, Long> {
               AND train.status = 'ACTIVE'
             ORDER BY train.trainNumber
             """)
-    List<Object[]> findTrainStopsBetweenStations(
+    List<TrainSearchResponseDTO> findTrainStopsBetweenStations(
             @Param("fromCode") String fromCode,
             @Param("toCode") String toCode);
 }

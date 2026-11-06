@@ -1,12 +1,15 @@
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, renderHook, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AxiosError } from 'axios';
 import { TrainSearchForm } from '@/features/search/components/TrainSearchForm';
 import { TrainCard } from '@/features/search/components/TrainCard';
 import { TrainList } from '@/features/search/components/TrainList';
 import TrainSearchPage from '@/pages/TrainSearchPage';
+import { useTrainSearch } from '@/features/search/hooks/useTrainSearch';
 import {
   validateStationCode,
   validateTravelDate,
@@ -502,5 +505,109 @@ describe('TrainSearchPage Integration', () => {
     );
 
     expect(searchTrainsSpy).toHaveBeenCalledWith('STN70094', 'STN92133', expect.any(AbortSignal));
+  });
+});
+
+describe('useTrainSearch hook — timeout retry suppression', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function createHookQueryClient() {
+    return new QueryClient({
+      defaultOptions: {
+        queries: {
+          retryDelay: 0,
+          staleTime: 0,
+        },
+      },
+    });
+  }
+
+  it('does NOT retry when search fails with Axios timeout (ECONNABORTED)', async () => {
+    const timeoutError = new AxiosError('timeout of 15000ms exceeded', 'ECONNABORTED');
+    const searchTrainsSpy = vi.spyOn(api, 'searchTrains').mockRejectedValue(timeoutError);
+
+    const queryClient = createHookQueryClient();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useTrainSearch('HWH', 'NDLS'), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+
+    // Initial attempt only — zero duplicate retry attempts
+    expect(searchTrainsSpy).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBe(timeoutError);
+  });
+
+  it('does NOT retry when error message contains timeout', async () => {
+    const timeoutError = new Error('Connection timeout of 15000ms exceeded');
+    const searchTrainsSpy = vi.spyOn(api, 'searchTrains').mockRejectedValue(timeoutError);
+
+    const queryClient = createHookQueryClient();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useTrainSearch('STA', 'KTE'), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+
+    expect(searchTrainsSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves retry (retries 1 time) for 500 server errors', async () => {
+    const serverError = new AxiosError(
+      'Internal Server Error',
+      'ERR_BAD_RESPONSE',
+      undefined,
+      undefined,
+      { status: 500, statusText: 'Internal Server Error' } as any,
+    );
+    const searchTrainsSpy = vi.spyOn(api, 'searchTrains').mockRejectedValue(serverError);
+
+    const queryClient = createHookQueryClient();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useTrainSearch('HWH', 'NDLS'), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+
+    // 1 initial call + 1 retry = 2 calls
+    expect(searchTrainsSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry for 4xx client errors', async () => {
+    const badRequestError = new AxiosError(
+      'Bad Request',
+      'ERR_BAD_REQUEST',
+      undefined,
+      undefined,
+      { status: 400, statusText: 'Bad Request' } as any,
+    );
+    const searchTrainsSpy = vi.spyOn(api, 'searchTrains').mockRejectedValue(badRequestError);
+
+    const queryClient = createHookQueryClient();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useTrainSearch('HWH', 'NDLS'), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+
+    expect(searchTrainsSpy).toHaveBeenCalledTimes(1);
   });
 });
