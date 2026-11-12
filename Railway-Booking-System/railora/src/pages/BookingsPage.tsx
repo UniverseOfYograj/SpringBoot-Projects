@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   Train,
   Calendar,
@@ -33,8 +33,9 @@ import { ROUTES } from '@/lib/constants';
 export default function BookingsPage() {
   const { state: authState } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const currentTab = searchParams.get('tab') === 'pnr' ? 'pnr' : 'history';
+  const currentTab = location.pathname === '/pnr' || searchParams.get('tab') === 'pnr' ? 'pnr' : 'history';
   const initialPnr = searchParams.get('pnr') || undefined;
 
   const [bookings, setBookings] = useState<BookingDetailResponseDTO[]>([]);
@@ -150,31 +151,6 @@ export default function BookingsPage() {
     }
   }
 
-  if (authState.status === 'unauthenticated') {
-    return (
-      <section className="mx-auto max-w-4xl px-4 py-16 sm:px-6 lg:px-8">
-        <div className="rounded-2xl border border-surface-border bg-surface-card p-8 sm:p-12 text-center shadow-card">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-50 text-teal-600 mb-4 shadow-sm">
-            <User size={28} />
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-ink-primary">Sign in to view your bookings</h1>
-          <p className="mx-auto mt-3 max-w-md text-sm text-ink-muted">
-            Access your confirmed railway tickets, monitor reservation statuses, and view complete trip details.
-          </p>
-          <div className="mt-6 flex items-center justify-center gap-3">
-            <Button variant="accent" size="lg" onClick={() => navigate(ROUTES.LOGIN)}>
-              Sign In
-              <ArrowRight size={16} />
-            </Button>
-            <Button variant="secondary" size="lg" onClick={() => navigate(ROUTES.REGISTER)}>
-              Create Account
-            </Button>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
   return (
     <section className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       {/* Header bar */}
@@ -182,32 +158,38 @@ export default function BookingsPage() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl sm:text-3xl font-extrabold text-navy-700 tracking-tight">
-              My Bookings
+              {currentTab === 'pnr' ? 'PNR Status Enquiry' : 'My Bookings'}
             </h1>
-            <Badge variant="teal" size="sm">
-              {bookings.length} {bookings.length === 1 ? 'Trip' : 'Trips'}
-            </Badge>
+            {authState.status === 'authenticated' && currentTab === 'history' && (
+              <Badge variant="teal" size="sm">
+                {bookings.length} {bookings.length === 1 ? 'Trip' : 'Trips'}
+              </Badge>
+            )}
           </div>
           <p className="mt-1 text-sm text-ink-muted">
-            Manage your booked train journeys, seat allocations, and payment confirmations.
+            {currentTab === 'pnr'
+              ? 'Track real-time railway reservation status, coach and seat allocation, and journey schedule.'
+              : 'Manage your booked train journeys, seat allocations, and payment confirmations.'}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={loadBookings}
-            disabled={loading}
-            aria-label="Refresh bookings"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            Refresh
-          </Button>
+          {authState.status === 'authenticated' && currentTab === 'history' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={loadBookings}
+              disabled={loading}
+              aria-label="Refresh bookings"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              Refresh
+            </Button>
+          )}
           <Link to={ROUTES.SEARCH}>
             <Button variant="accent" size="sm">
               <Train size={14} />
-              Book Another Train
+              {currentTab === 'pnr' ? 'Search Trains' : 'Book Another Train'}
             </Button>
           </Link>
         </div>
@@ -218,10 +200,14 @@ export default function BookingsPage() {
         <button
           type="button"
           onClick={() => {
-            const next = new URLSearchParams(searchParams);
-            next.delete('tab');
-            next.delete('pnr');
-            setSearchParams(next);
+            if (location.pathname === ROUTES.PNR) {
+              navigate(ROUTES.BOOKINGS);
+            } else {
+              const next = new URLSearchParams(searchParams);
+              next.delete('tab');
+              next.delete('pnr');
+              setSearchParams(next);
+            }
           }}
           className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-interact ${
             currentTab === 'history'
@@ -235,9 +221,11 @@ export default function BookingsPage() {
         >
           <Ticket size={16} />
           <span>My Bookings</span>
-          <Badge variant={currentTab === 'history' ? 'teal' : 'neutral'} size="sm">
-            {bookings.length}
-          </Badge>
+          {authState.status === 'authenticated' && (
+            <Badge variant={currentTab === 'history' ? 'teal' : 'neutral'} size="sm">
+              {bookings.length}
+            </Badge>
+          )}
         </button>
 
         <button
@@ -272,6 +260,27 @@ export default function BookingsPage() {
               setSearchParams(next);
             }}
           />
+        </div>
+      ) : authState.status === 'unauthenticated' ? (
+        <div id="panel-history" role="tabpanel" aria-labelledby="tab-history" className="mt-8">
+          <div className="rounded-2xl border border-surface-border bg-surface-card p-8 sm:p-12 text-center shadow-card">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-50 text-teal-600 mb-4 shadow-sm">
+              <User size={28} />
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-ink-primary">Sign in to view your bookings</h1>
+            <p className="mx-auto mt-3 max-w-md text-sm text-ink-muted">
+              Access your confirmed railway tickets, monitor reservation statuses, and view complete trip details.
+            </p>
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <Button variant="accent" size="lg" onClick={() => navigate(ROUTES.LOGIN)}>
+                Sign In
+                <ArrowRight size={16} />
+              </Button>
+              <Button variant="secondary" size="lg" onClick={() => navigate(ROUTES.REGISTER)}>
+                Create Account
+              </Button>
+            </div>
+          </div>
         </div>
       ) : (
         <div id="panel-history" role="tabpanel" aria-labelledby="tab-history">

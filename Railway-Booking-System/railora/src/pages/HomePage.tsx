@@ -7,7 +7,6 @@ import {
   ArrowRight,
   Search,
   CheckCircle2,
-  Lock,
   Layers,
   Sparkles,
   Database,
@@ -18,6 +17,7 @@ import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/Card';
 import { ROUTES } from '@/lib/constants';
+import { TrainSearchForm } from '@/features/search/components/TrainSearchForm';
 
 const CORE_PILLARS = [
   {
@@ -103,27 +103,15 @@ export default function HomePage() {
               restrained, accessible frontend. Deterministic seat holds, idempotent payments, and clean visual typography.
             </p>
 
-            {/* Hero CTAs */}
-            <div className="mt-10 flex flex-col items-center justify-center gap-3.5 sm:flex-row">
-              <Button
-                variant="accent"
-                size="lg"
-                onClick={() => navigate(ROUTES.SEARCH)}
-                leftIcon={<Search size={18} />}
-                className="w-full sm:w-auto shadow-md"
-              >
-                Search Trains
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="lg"
-                onClick={() => navigate(ROUTES.REGISTER)}
-                leftIcon={<Lock size={16} />}
-                className="w-full sm:w-auto text-white border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/40 active:bg-white/15"
-              >
-                Get Started
-              </Button>
+            {/* ── Direct Hero Train Search Form ── */}
+            <div className="mt-10 mx-auto max-w-4xl text-left text-ink-primary">
+              <TrainSearchForm
+                onSearch={(params) => {
+                  navigate(
+                    `${ROUTES.SEARCH}?from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(params.to)}&date=${encodeURIComponent(params.date)}`,
+                  );
+                }}
+              />
             </div>
 
             {/* System Trust Metadata */}

@@ -12,6 +12,7 @@ export default function TrainSearchPage() {
   const fromParam = (searchParams.get('from') || '').trim().toUpperCase();
   const toParam = (searchParams.get('to') || '').trim().toUpperCase();
   const dateParam = (searchParams.get('date') || '').trim();
+  const autoOpenTrain = (searchParams.get('autoOpenTrain') || '').trim();
 
   const hasQueryParams = Boolean(fromParam && toParam);
 
@@ -42,13 +43,16 @@ export default function TrainSearchPage() {
     enabled: isSearchValid,
   });
 
-  const handleSearch = (params: { from: string; to: string; date: string }) => {
+  const handleSearch = (params: { from: string; to: string; date: string; autoOpenTrain?: string }) => {
     const nextParams: Record<string, string> = {
       from: params.from.trim().toUpperCase(),
       to: params.to.trim().toUpperCase(),
     };
     if (params.date) {
       nextParams.date = params.date;
+    }
+    if (params.autoOpenTrain) {
+      nextParams.autoOpenTrain = params.autoOpenTrain;
     }
     setSearchParams(nextParams);
   };
@@ -141,6 +145,15 @@ export default function TrainSearchPage() {
             toCode={toParam}
             travelDate={dateParam}
             onSwapAndSearch={handleSwapAndSearch}
+            autoOpenTrain={autoOpenTrain}
+            onSelectDate={(newDate) => {
+              handleSearch({
+                from: fromParam || 'HWH',
+                to: toParam || 'NDLS',
+                date: newDate,
+                autoOpenTrain: autoOpenTrain || '12301',
+              });
+            }}
           />
         </section>
 

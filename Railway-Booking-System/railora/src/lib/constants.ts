@@ -10,6 +10,7 @@ export const ROUTES = {
   HOME:         '/',
   SEARCH:       '/search',
   BOOKINGS:     '/bookings',
+  PNR:          '/pnr',
   WAITING_ROOM: '/waiting-room',
   LOGIN:        '/login',
   REGISTER:     '/register',

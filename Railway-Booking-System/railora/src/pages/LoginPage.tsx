@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, LockKeyhole, ShieldCheck, Train } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -17,12 +17,18 @@ export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const submitting = useRef(false);
   const [fields, setFields] = useState<LoginFields>({ username: '', password: '' });
   const [errors, setErrors] = useState<Partial<LoginFields>>({});
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const registered = (location.state as { registered?: boolean } | null)?.registered;
+
+  const redirectParam = searchParams.get('redirect') || (location.state as { from?: string; redirect?: string } | null)?.redirect || (location.state as { from?: string } | null)?.from;
+  const safeRedirect = redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
+    ? redirectParam
+    : ROUTES.HOME;
 
   function validate(): Partial<LoginFields> {
     const nextErrors: Partial<LoginFields> = {};
@@ -43,7 +49,7 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       await login({ username: fields.username.trim(), password: fields.password });
-      navigate(ROUTES.HOME, { replace: true });
+      navigate(safeRedirect, { replace: true });
     } catch (error) {
       setFormError(
         error instanceof AuthApiError
@@ -146,7 +152,7 @@ export default function LoginPage() {
             <p className="mt-6 text-center text-sm text-ink-muted">
               New to Railora?{' '}
               <Link
-                to={ROUTES.REGISTER}
+                to={`${ROUTES.REGISTER}${redirectParam ? `?redirect=${encodeURIComponent(redirectParam)}` : ''}`}
                 className="font-semibold text-teal-700 underline-offset-4 hover:underline focus-visible:rounded-sm"
               >
                 Create an account

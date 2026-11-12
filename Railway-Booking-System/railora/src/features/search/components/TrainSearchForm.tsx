@@ -216,6 +216,41 @@ export function TrainSearchForm({
 
       {/* Quick Route Suggestions */}
       <div className="mt-5 border-t border-surface-border/60 pt-4">
+        {/* Seeded Production Demo Shortcut */}
+        <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50/80 p-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <span className="inline-flex items-center justify-center rounded-md bg-teal-700 px-2.5 py-1 font-mono text-2xs font-bold text-white uppercase tracking-wider shrink-0 w-fit">
+              Live Demo Run
+            </span>
+            <div>
+              <span className="text-xs font-bold text-navy-800">
+                Train 12301 | HWH → NDLS | 1 December 2026
+              </span>
+              <p className="text-2xs text-ink-muted mt-0.5">
+                Pre-configured test inventory with 16 available berths across 2A, 3A, and Sleeper coaches.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setFrom('HWH');
+              setTo('NDLS');
+              setDate('2026-12-01');
+              setFromError(null);
+              setToError(null);
+              setDateError(null);
+              setGeneralError(null);
+              onSearch({ from: 'HWH', to: 'NDLS', date: '2026-12-01' });
+            }}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 transition-interact cursor-pointer shrink-0"
+            aria-label="Try Demo Booking — Train 12301 | HWH → NDLS | 1 Dec 2026"
+          >
+            <span>Try Demo Booking — Train 12301 | HWH → NDLS | 1 Dec 2026</span>
+            <Search size={14} aria-hidden="true" />
+          </button>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-wider text-ink-muted mr-1">
             Popular Routes:

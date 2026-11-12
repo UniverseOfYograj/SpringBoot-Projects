@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, ShieldCheck, Train } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -20,6 +20,8 @@ const emptyFields: RegistrationDetails = {
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirectParam = searchParams.get('redirect');
   const submitting = useRef(false);
   const [fields, setFields] = useState(emptyFields);
   const [errors, setErrors] = useState<RegistrationErrors>({});
@@ -57,7 +59,10 @@ export default function RegisterPage() {
         email: fields.email.trim(),
         phoneNumber: fields.phoneNumber.trim(),
       });
-      navigate(ROUTES.LOGIN, { replace: true, state: { registered: true } });
+      navigate(
+        `${ROUTES.LOGIN}${redirectParam ? `?redirect=${encodeURIComponent(redirectParam)}` : ''}`,
+        { replace: true, state: { registered: true, redirect: redirectParam } },
+      );
     } catch (error) {
       setFormError(
         error instanceof AuthApiError
@@ -177,7 +182,7 @@ export default function RegisterPage() {
             <p className="mt-6 text-center text-sm text-ink-muted">
               Already have an account?{' '}
               <Link
-                to={ROUTES.LOGIN}
+                to={`${ROUTES.LOGIN}${redirectParam ? `?redirect=${encodeURIComponent(redirectParam)}` : ''}`}
                 className="font-semibold text-teal-700 underline-offset-4 hover:underline focus-visible:rounded-sm"
               >
                 Sign in

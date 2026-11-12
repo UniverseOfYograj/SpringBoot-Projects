@@ -1,18 +1,46 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowRight, Clock, Train as TrainIcon, Calendar, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { formatTimeString, calculateDuration } from '../utils';
 import type { TrainSearchResponseDTO } from '../types';
+import type { JourneyDTO } from '@/features/booking/types';
 import { SeatSelectionModal } from '@/features/booking/components/SeatSelectionModal';
 
 export interface TrainCardProps {
   train: TrainSearchResponseDTO;
   travelDate?: string;
+  journey?: JourneyDTO | null;
+  isTimetableOnly?: boolean;
+  autoOpen?: boolean;
+  onSelectDate?: (date: string) => void;
+  onModalClose?: () => void;
 }
 
-export function TrainCard({ train, travelDate }: TrainCardProps) {
-  const [isModalOpen, setIsModalOpen] = useState(false);
+export function TrainCard({
+  train,
+  travelDate,
+  journey,
+  isTimetableOnly,
+  autoOpen = false,
+  onSelectDate,
+  onModalClose,
+}: TrainCardProps) {
+  const [isModalOpen, setIsModalOpen] = useState(autoOpen && !isTimetableOnly);
+
+  useEffect(() => {
+    if (autoOpen && !isTimetableOnly) {
+      setIsModalOpen(true);
+    }
+  }, [autoOpen, isTimetableOnly]);
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    onModalClose?.();
+  };
+
+  // If isTimetableOnly is explicitly passed or journey is explicitly null, treat as timetable-only.
+  const isServiceTimetableOnly = isTimetableOnly ?? (journey === null);
 
   const departureTime = train.fromDepartureTime ?? train.fromArrivalTime;
   const arrivalTime = train.toArrivalTime ?? train.toDepartureTime;
@@ -47,12 +75,22 @@ export function TrainCard({ train, travelDate }: TrainCardProps) {
           </div>
 
           <div className="flex items-center gap-2">
-            <Badge variant="teal" size="sm">
-              Direct Route
-            </Badge>
+            {isServiceTimetableOnly ? (
+              <Badge variant="neutral" size="sm">
+                Timetable Only
+              </Badge>
+            ) : journey ? (
+              <Badge variant="teal" size="sm">
+                Demo Booking Ready
+              </Badge>
+            ) : (
+              <Badge variant="teal" size="sm">
+                Direct Route
+              </Badge>
+            )}
             <span className="text-2xs font-medium text-ink-muted hidden sm:inline-flex items-center gap-1">
               <TrainIcon size={12} aria-hidden="true" />
-              Timetable Service
+              {isServiceTimetableOnly ? 'Schedule Record' : 'Timetable Service'}
             </span>
           </div>
         </div>
@@ -154,26 +192,84 @@ export function TrainCard({ train, travelDate }: TrainCardProps) {
             <span>Verified Scheduled Timetable</span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <a
-              href={`/waiting-room?trainId=${train.trainId}&trainNumber=${encodeURIComponent(train.trainNumber)}&trainName=${encodeURIComponent(train.trainName)}&fromStationCode=${encodeURIComponent(train.fromStationCode)}&toStationCode=${encodeURIComponent(train.toStationCode)}&date=${encodeURIComponent(travelDate ?? '')}&quota=TATKAL`}
-              className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 transition-interact hover:bg-amber-100 hover:border-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-              aria-label={`Enter Tatkal waiting room for ${train.trainNumber}`}
-            >
-              <Zap size={13} className="text-amber-600" aria-hidden="true" />
-              <span>Tatkal Queue</span>
-            </a>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            {isServiceTimetableOnly ? (
+              <div className="flex flex-col sm:items-end gap-1.5">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-400 cursor-not-allowed"
+                    title="Tatkal booking is not available for timetable-only services"
+                    aria-disabled="true"
+                  >
+                    <Zap size={13} className="text-slate-400" aria-hidden="true" />
+                    <span>Tatkal Queue</span>
+                  </span>
 
-            <Button
-              type="button"
-              variant="accent"
-              size="sm"
-              onClick={() => setIsModalOpen(true)}
-              aria-label={`Select seats for ${train.trainNumber}`}
-            >
-              <span>Book Seats</span>
-              <ArrowRight size={14} aria-hidden="true" />
-            </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled
+                    aria-disabled="true"
+                    className="opacity-60 cursor-not-allowed"
+                    aria-label={`Demo booking is not available for ${train.trainNumber}`}
+                  >
+                    <span>Book Seats</span>
+                    <ArrowRight size={14} aria-hidden="true" />
+                  </Button>
+                </div>
+
+                <div className="text-2xs text-ink-muted text-right space-y-0.5">
+                  <span className="text-2xs text-amber-700 font-medium block">
+                    Demo booking is not available for this train/date.
+                  </span>
+                  <p className="text-amber-700 font-medium">
+                    No scheduled operational run on {travelDate || 'this date'}.
+                  </p>
+                  <p className="text-ink-muted">
+                    Timetable active • Run not scheduled • Seats unavailable
+                  </p>
+                </div>
+
+                {(train.trainNumber.trim() === '12301' || train.trainId === 1) &&
+                  travelDate !== '2026-12-01' &&
+                  onSelectDate && (
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      onClick={() => onSelectDate('2026-12-01')}
+                      className="mt-1 bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs shadow-2xs"
+                      aria-label="Switch to 1 Dec 2026 (Demo Run)"
+                    >
+                      <Calendar size={13} className="mr-1" aria-hidden="true" />
+                      Switch to 1 Dec 2026 (Demo Run)
+                    </Button>
+                  )}
+              </div>
+            ) : (
+              <>
+                <a
+                  href={`/waiting-room?trainId=${train.trainId}${journey ? `&journeyId=${journey.journeyId}` : ''}&trainNumber=${encodeURIComponent(train.trainNumber)}&trainName=${encodeURIComponent(train.trainName)}&fromStationCode=${encodeURIComponent(train.fromStationCode)}&toStationCode=${encodeURIComponent(train.toStationCode)}&date=${encodeURIComponent(travelDate ?? '')}&quota=TATKAL`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 transition-interact hover:bg-amber-100 hover:border-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  aria-label={`Enter Tatkal waiting room for ${train.trainNumber}`}
+                >
+                  <Zap size={13} className="text-amber-600" aria-hidden="true" />
+                  <span>Tatkal Queue</span>
+                </a>
+
+                <Button
+                  type="button"
+                  variant="accent"
+                  size="sm"
+                  onClick={() => setIsModalOpen(true)}
+                  aria-label={`Select seats for ${train.trainNumber}`}
+                >
+                  <span>Book Seats</span>
+                  <ArrowRight size={14} aria-hidden="true" />
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </article>
@@ -181,9 +277,10 @@ export function TrainCard({ train, travelDate }: TrainCardProps) {
       {isModalOpen && (
         <SeatSelectionModal
           isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
+          onClose={handleCloseModal}
           train={train}
           travelDate={travelDate}
+          journeyId={journey?.journeyId}
         />
       )}
     </>

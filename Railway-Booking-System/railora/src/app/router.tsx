@@ -18,6 +18,7 @@ export default function AppRouter() {
       <Route path={ROUTES.HOME} element={<HomePage />} />
       <Route path={ROUTES.SEARCH} element={<TrainSearchPage />} />
       <Route path={ROUTES.BOOKINGS} element={<BookingsPage />} />
+      <Route path={ROUTES.PNR} element={<BookingsPage />} />
       <Route path={ROUTES.WAITING_ROOM} element={<WaitingRoomPage />} />
       <Route path={ROUTES.LOGIN} element={<LoginPage />} />
       <Route path={ROUTES.REGISTER} element={<RegisterPage />} />

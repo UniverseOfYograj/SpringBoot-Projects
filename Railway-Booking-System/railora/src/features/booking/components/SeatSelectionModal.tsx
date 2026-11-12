@@ -15,6 +15,7 @@ import {
   RefreshCw,
   MapPin,
   Receipt,
+  Printer,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -40,6 +41,34 @@ import type {
 } from '../types';
 import type { TrainSearchResponseDTO } from '@/features/search/types';
 import { ROUTES } from '@/lib/constants';
+
+export const STANDARD_CLASS_NAMES: Record<string, string> = {
+  '1A': 'AC First Class',
+  '2A': 'AC 2 Tier',
+  '3A': 'AC 3 Tier',
+  '3E': 'AC 3 Economy',
+  'SL': 'Sleeper',
+  'CC': 'AC Chair Car',
+  'EC': 'Executive Chair Car',
+  '2S': 'Second Sitting',
+};
+
+export const PENDING_BOOKING_STORAGE_KEY = 'railora_pending_booking_intent';
+
+export interface PendingBookingIntent {
+  journeyId: number;
+  trainNumber: string;
+  trainName: string;
+  travelDate: string;
+  fromStationCode: string;
+  toStationCode: string;
+  selectedClassCode: string;
+  selectedCoachNumber: string;
+  selectedSeatNumbers: number[];
+  passengers?: Record<number, PassengerForm>;
+  step: ModalStep;
+  timestamp: number;
+}
 
 export interface SeatSelectionModalProps {
   isOpen: boolean;
@@ -76,6 +105,7 @@ export function SeatSelectionModal({
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [restoredNotification, setRestoredNotification] = useState<string | null>(null);
 
   const [journey, setJourney] = useState<JourneyDTO | null>(null);
   const [boardingStop, setBoardingStop] = useState<JourneyStopDTO | null>(null);
@@ -273,13 +303,14 @@ export function SeatSelectionModal({
             const held = cList.reduce((acc, c) => acc + c.heldSeats, 0);
             const booked = cList.reduce((acc, c) => acc + c.bookedSeats, 0);
             const name =
-              cCode === 'SL'
+              STANDARD_CLASS_NAMES[cCode] ||
+              (cCode === 'SL'
                 ? 'Sleeper'
                 : cCode === '3A'
                   ? 'AC 3 Tier'
                   : cCode === '2A'
                     ? 'AC 2 Tier'
-                    : cCode;
+                    : cCode);
             const fare =
               cCode === 'SL' ? 500 : cCode === '3A' ? 1000 : cCode === '2A' ? 1500 : 500;
             return {
@@ -295,6 +326,29 @@ export function SeatSelectionModal({
           });
         }
 
+        // Enrich class names and fetch authoritative dynamic fare quotes from backend API
+        for (const cls of classList) {
+          if (STANDARD_CLASS_NAMES[cls.classCode]) {
+            cls.className = STANDARD_CLASS_NAMES[cls.classCode];
+          }
+          try {
+            if (typeof bookingApi.getFareQuote === 'function') {
+              const quote = await bookingApi.getFareQuote({
+                journeyId: matchedJourney.journeyId,
+                travelClass: cls.classCode,
+                passengerCount: 1,
+                boardingJourneyStopId: matchedBoarding.journeyStopId,
+                alightingJourneyStopId: matchedAlighting.journeyStopId,
+              });
+              if (quote?.perPassengerFare?.total) {
+                cls.baseFare = quote.perPassengerFare.total;
+              }
+            }
+          } catch {
+            // Keep backend baseFare
+          }
+        }
+
         setClasses(classList);
         setSeats(seatList);
 
@@ -304,6 +358,70 @@ export function SeatSelectionModal({
           if (initialClass.coaches.length > 0) {
             setSelectedCoachNumber(initialClass.coaches[0].coachNumber);
           }
+        }
+
+        // Restore in-flight booking intent if preserved in sessionStorage
+        try {
+          const savedIntentRaw = sessionStorage.getItem(PENDING_BOOKING_STORAGE_KEY);
+          if (savedIntentRaw) {
+            const intent: PendingBookingIntent = JSON.parse(savedIntentRaw);
+            const isFresh = Date.now() - (intent.timestamp || 0) < 30 * 60 * 1000;
+            const isMatch =
+              intent.journeyId === matchedJourney.journeyId ||
+              (intent.trainNumber.trim() === train.trainNumber.trim() &&
+                intent.travelDate === travelDate);
+
+            if (isFresh && isMatch) {
+              if (
+                intent.selectedClassCode &&
+                classList.some((c) => c.classCode === intent.selectedClassCode)
+              ) {
+                setSelectedClassCode(intent.selectedClassCode);
+              }
+              if (intent.selectedCoachNumber) {
+                setSelectedCoachNumber(intent.selectedCoachNumber);
+              }
+
+              // Re-validate seats against fresh authoritative backend seats
+              const matchedSeats = seatList.filter(
+                (s) =>
+                  intent.selectedSeatNumbers.includes(s.seatNumber) &&
+                  (!intent.selectedCoachNumber || s.coachNumber === intent.selectedCoachNumber),
+              );
+
+              const availableSeats = matchedSeats.filter((s) => s.status === 'AVAILABLE');
+              const unavailableSeats = matchedSeats.filter((s) => s.status !== 'AVAILABLE');
+
+              if (availableSeats.length > 0) {
+                setSelectedSeats(availableSeats);
+                if (intent.passengers) {
+                  setPassengers(intent.passengers);
+                }
+
+                if (unavailableSeats.length > 0) {
+                  setError(
+                    `Some previously selected seats (${unavailableSeats.map((s) => `#${s.seatNumber}`).join(', ')}) were booked while signing in. Your remaining available seats have been retained.`,
+                  );
+                  setStep('select-seat');
+                } else {
+                  setRestoredNotification(
+                    `Welcome back! Your seat selection (${availableSeats.map((s) => `#${s.seatNumber}`).join(', ')}) has been restored.`,
+                  );
+                  if (intent.step === 'passengers') {
+                    setStep('passengers');
+                  }
+                }
+              } else if (intent.selectedSeatNumbers.length > 0) {
+                setError(
+                  'Your previously selected seats are no longer available. Please select from currently available seats.',
+                );
+                setStep('select-seat');
+              }
+            }
+            sessionStorage.removeItem(PENDING_BOOKING_STORAGE_KEY);
+          }
+        } catch {
+          // Ignore parsing/sessionStorage errors
         }
       } catch {
         if (!active) return;
@@ -467,10 +585,39 @@ export function SeatSelectionModal({
     return true;
   }
 
+  const handleSignInToBook = (
+    targetStep: ModalStep = selectedSeats.length > 0 ? 'passengers' : 'select-seat',
+  ) => {
+    if (!journey) return;
+    const intent: PendingBookingIntent = {
+      journeyId: journey.journeyId,
+      trainNumber: train.trainNumber,
+      trainName: train.trainName,
+      travelDate: travelDate || '',
+      fromStationCode: train.fromStationCode,
+      toStationCode: train.toStationCode,
+      selectedClassCode: selectedClassCode || '',
+      selectedCoachNumber: selectedCoachNumber || '',
+      selectedSeatNumbers: selectedSeats.map((s) => s.seatNumber),
+      passengers,
+      step: targetStep,
+      timestamp: Date.now(),
+    };
+
+    try {
+      sessionStorage.setItem(PENDING_BOOKING_STORAGE_KEY, JSON.stringify(intent));
+    } catch {
+      // Ignore sessionStorage errors
+    }
+
+    const returnUrl = `/search?from=${encodeURIComponent(train.fromStationCode)}&to=${encodeURIComponent(train.toStationCode)}&date=${encodeURIComponent(travelDate || '')}&autoOpenTrain=${encodeURIComponent(train.trainNumber)}`;
+    navigate(`${ROUTES.LOGIN}?redirect=${encodeURIComponent(returnUrl)}`);
+  };
+
   // Hold seats and create booking
   async function executeHoldAndBooking(useSynthesizedSinglePassenger: boolean = false) {
     if (authState.status !== 'authenticated') {
-      navigate(ROUTES.LOGIN);
+      handleSignInToBook(useSynthesizedSinglePassenger ? 'select-seat' : 'passengers');
       return;
     }
 
@@ -688,6 +835,59 @@ export function SeatSelectionModal({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   }
 
+  function renderSeatButton(seat: SeatAvailabilityDTO) {
+    const isAvailable = seat.status === 'AVAILABLE';
+    const isSelected = selectedSeats.some((s) => s.seatId === seat.seatId);
+    const isOnHold = seat.status === 'HOLD';
+    const isBooked = seat.status === 'BOOKED';
+
+    return (
+      <button
+        key={seat.seatId}
+        type="button"
+        disabled={!isAvailable}
+        onClick={() => toggleSeatSelection(seat)}
+        className={[
+          'flex flex-col items-center justify-center rounded-lg p-2.5 border text-xs font-semibold transition-interact cursor-pointer relative',
+          isSelected
+            ? 'border-navy-700 bg-navy-700 text-white shadow-md ring-2 ring-navy-700/30'
+            : isAvailable
+              ? 'border-teal-500 bg-white text-teal-800 hover:bg-teal-50 hover:border-teal-600 shadow-2xs'
+              : isOnHold
+                ? 'border-amber-300 bg-amber-50 text-amber-700 cursor-not-allowed opacity-80'
+                : isBooked
+                  ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-60'
+                  : 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-60',
+        ].join(' ')}
+        aria-label={`Seat ${seat.seatNumber}, Coach ${seat.coachNumber}, ${seat.seatType}, ${seat.status}`}
+      >
+        <div className="flex w-full items-center justify-between text-2xs mb-0.5">
+          <span className={isSelected ? 'text-teal-200' : 'text-ink-muted'}>
+            {seat.coachNumber}
+          </span>
+          {isSelected && <span className="font-bold text-teal-300">✓</span>}
+        </div>
+        <span className="font-mono text-sm font-extrabold tracking-tight">
+          #{seat.seatNumber}
+        </span>
+        <span
+          className={[
+            'text-[9px] uppercase font-bold tracking-tight mt-0.5 px-1 rounded',
+            isSelected
+              ? 'bg-navy-800 text-teal-300'
+              : isAvailable
+                ? 'bg-teal-50 text-teal-700'
+                : isOnHold
+                  ? 'bg-amber-100 text-amber-800'
+                  : 'bg-slate-200 text-slate-500',
+          ].join(' ')}
+        >
+          {seat.seatType}
+        </span>
+      </button>
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-navy-950/70 backdrop-blur-sm overflow-y-auto"
@@ -736,12 +936,49 @@ export function SeatSelectionModal({
           </button>
         </div>
 
+        {/* Visual Step Indicator */}
+        {journey && step !== 'confirmed' && (
+          <div className="flex items-center justify-between border-b border-surface-border bg-surface-subtle/20 px-6 py-2.5 text-xs font-semibold">
+            <div className={`flex items-center gap-1.5 ${step === 'select-seat' ? 'text-teal-700 font-bold' : 'text-ink-muted'}`}>
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-2xs ${step === 'select-seat' ? 'bg-teal-700 text-white font-bold' : 'bg-surface-muted text-ink-muted'}`}>1</span>
+              <span>Class & Berths</span>
+            </div>
+            <div className="h-0.5 w-6 sm:w-12 bg-surface-border" />
+            <div className={`flex items-center gap-1.5 ${step === 'passengers' ? 'text-teal-700 font-bold' : 'text-ink-muted'}`}>
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-2xs ${step === 'passengers' ? 'bg-teal-700 text-white font-bold' : 'bg-surface-muted text-ink-muted'}`}>2</span>
+              <span>Passenger Details</span>
+            </div>
+            <div className="h-0.5 w-6 sm:w-12 bg-surface-border" />
+            <div className={`flex items-center gap-1.5 ${step === 'payment' ? 'text-teal-700 font-bold' : 'text-ink-muted'}`}>
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-2xs ${step === 'payment' ? 'bg-teal-700 text-white font-bold' : 'bg-surface-muted text-ink-muted'}`}>3</span>
+              <span>Review & Pay</span>
+            </div>
+          </div>
+        )}
+
         {/* Modal Body */}
         <div className="p-6">
           {error && (
             <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-status-danger-border bg-status-danger-bg p-3.5 text-sm text-status-danger-text">
               <AlertCircle size={18} className="shrink-0 mt-0.5" />
               <div>{error}</div>
+            </div>
+          )}
+
+          {restoredNotification && (
+            <div className="mb-4 flex items-center justify-between rounded-xl border border-teal-200 bg-teal-50 px-3.5 py-2.5 text-xs text-teal-800">
+              <span className="flex items-center gap-1.5 font-medium">
+                <CheckCircle2 size={16} className="text-teal-600 shrink-0" />
+                {restoredNotification}
+              </span>
+              <button
+                type="button"
+                onClick={() => setRestoredNotification(null)}
+                className="text-teal-600 hover:text-teal-800 font-bold ml-2 text-sm leading-none"
+                aria-label="Dismiss restored notification"
+              >
+                ×
+              </button>
             </div>
           )}
 
@@ -761,6 +998,36 @@ export function SeatSelectionModal({
             <div className="py-12 text-center">
               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
               <p className="mt-3 text-sm text-ink-muted">Loading journey and seat availability…</p>
+            </div>
+          ) : !journey ? (
+            <div className="py-8 text-center space-y-4">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+                <Train size={28} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-ink-primary">
+                  Demo Booking Unavailable for this Train/Date
+                </h3>
+                <p className="text-xs text-ink-muted max-w-md mx-auto mt-1 leading-relaxed">
+                  {error || `No scheduled journey run found for ${train.trainNumber} on ${travelDate}. Please choose another date.`}
+                </p>
+              </div>
+              <div className="mx-auto max-w-md rounded-xl border border-teal-200 bg-teal-50/60 p-3.5 text-left text-xs">
+                <div className="font-semibold text-teal-900 mb-1 flex items-center gap-1.5">
+                  <ShieldCheck size={14} className="text-teal-700" />
+                  Configured Production Demo Run
+                </div>
+                <p className="text-2xs text-teal-800 leading-normal">
+                  A complete 16-seat operational inventory run is actively provisioned for:
+                  <br />
+                  <span className="font-bold text-navy-800">Train 12301</span> • <strong>HWH → NDLS</strong> • <strong>1 December 2026</strong> (Coaches S1, B1, A1).
+                </p>
+              </div>
+              <div className="pt-2">
+                <Button variant="secondary" size="sm" onClick={onClose}>
+                  Close
+                </Button>
+              </div>
             </div>
           ) : step === 'select-seat' ? (
             <div>
@@ -869,11 +1136,11 @@ export function SeatSelectionModal({
                 </div>
               )}
 
-              {/* Coach Selector Tabs (if multiple coaches exist in selected class) */}
-              {currentClass && currentClass.coaches.length > 1 && (
-                <div className="mb-4 flex items-center gap-2">
-                  <span className="text-xs text-ink-muted">Coach:</span>
-                  <div className="flex items-center gap-1.5">
+              {/* Coach Selector Tabs */}
+              {currentClass && currentClass.coaches.length > 0 && (
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-ink-secondary">Coach:</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     {currentClass.coaches.map((coach) => {
                       const isCoachSelected = selectedCoachNumber === coach.coachNumber;
                       return (
@@ -894,7 +1161,7 @@ export function SeatSelectionModal({
                               : 'border-surface-border bg-white text-ink-secondary hover:bg-slate-50',
                           ].join(' ')}
                         >
-                          {coach.coachNumber} ({coach.availableSeats} avail)
+                          Coach {coach.coachNumber} ({coach.availableSeats} of {coach.totalSeats} avail)
                         </button>
                       );
                     })}
@@ -918,44 +1185,66 @@ export function SeatSelectionModal({
                 </span>
               </div>
 
-              {/* Seat Grid */}
+              {/* Seat Layout (Partitioned into Main and Side Berths) */}
               {displayedSeats.length === 0 ? (
                 <div className="py-8 text-center text-sm text-ink-muted">
                   No seats configured for this coach and class.
                 </div>
-              ) : (
-                <div className="max-h-60 overflow-y-auto rounded-xl border border-surface-border p-4 bg-slate-50/50">
-                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2.5">
-                    {displayedSeats.map((seat) => {
-                      const isAvailable = seat.status === 'AVAILABLE';
-                      const isSelected = selectedSeats.some((s) => s.seatId === seat.seatId);
+              ) : (() => {
+                const mainBerths = displayedSeats.filter(
+                  (s) => !s.seatType.toUpperCase().startsWith('SIDE'),
+                );
+                const sideBerths = displayedSeats.filter((s) =>
+                  s.seatType.toUpperCase().startsWith('SIDE'),
+                );
 
-                      return (
-                        <button
-                          key={seat.seatId}
-                          type="button"
-                          disabled={!isAvailable}
-                          onClick={() => toggleSeatSelection(seat)}
-                          className={[
-                            'flex flex-col items-center justify-center rounded-lg p-2.5 border text-xs font-semibold transition-interact cursor-pointer',
-                            isSelected
-                              ? 'border-navy-700 bg-navy-700 text-white shadow-md ring-2 ring-navy-700/30'
-                              : isAvailable
-                                ? 'border-teal-400 bg-white text-teal-800 hover:bg-teal-50 hover:border-teal-500'
-                                : seat.status === 'HOLD'
-                                  ? 'border-amber-300 bg-amber-50 text-amber-700 cursor-not-allowed opacity-75'
-                                  : 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-60',
-                          ].join(' ')}
-                        >
-                          <span className="text-2xs opacity-80">{seat.coachNumber}</span>
-                          <span className="font-mono text-sm font-bold">#{seat.seatNumber}</span>
-                          <span className="text-[10px] uppercase font-normal">{seat.seatType}</span>
-                        </button>
-                      );
-                    })}
+                return (
+                  <div className="max-h-64 overflow-y-auto rounded-xl border border-surface-border p-4 bg-slate-50/50">
+                    {sideBerths.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                        {/* Main Cabin Berths (LOWER, MIDDLE, UPPER) */}
+                        <div className="sm:col-span-8 border-b sm:border-b-0 sm:border-r border-surface-border pb-3 sm:pb-0 sm:pr-3">
+                          <div className="text-2xs font-bold text-ink-muted uppercase tracking-wider mb-2 flex items-center justify-between">
+                            <span>Cabin Berths (Main)</span>
+                            <span className="font-mono text-2xs text-teal-700">
+                              {mainBerths.filter((s) => s.status === 'AVAILABLE').length} of {mainBerths.length} available
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            {mainBerths.map((seat) => renderSeatButton(seat))}
+                          </div>
+                        </div>
+
+                        {/* Gangway / Aisle Indicator */}
+                        <div className="hidden sm:flex sm:col-span-1 items-center justify-center">
+                          <div className="h-full border-l border-dashed border-slate-300 flex items-center justify-center">
+                            <span className="transform -rotate-90 text-[10px] uppercase font-bold tracking-widest text-slate-400 select-none">
+                              Aisle
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Side Berths (SIDE LOWER, SIDE UPPER) */}
+                        <div className="sm:col-span-3">
+                          <div className="text-2xs font-bold text-ink-muted uppercase tracking-wider mb-2 flex items-center justify-between">
+                            <span>Side Berths</span>
+                            <span className="font-mono text-2xs text-teal-700">
+                              {sideBerths.filter((s) => s.status === 'AVAILABLE').length} of {sideBerths.length} available
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-1 gap-2">
+                            {sideBerths.map((seat) => renderSeatButton(seat))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-4 sm:grid-cols-6 gap-2.5">
+                        {displayedSeats.map((seat) => renderSeatButton(seat))}
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Action Bar */}
               <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-surface-border pt-4">
@@ -1018,14 +1307,27 @@ export function SeatSelectionModal({
                       </div>
                     )
                   ) : (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => navigate(ROUTES.LOGIN)}
-                    >
-                      <User size={14} />
-                      Sign in to Book
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {selectedSeats.length > 0 && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setStep('passengers')}
+                        >
+                          <Users size={14} />
+                          Passenger Details ({selectedSeats.length})
+                        </Button>
+                      )}
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={selectedSeats.length === 0}
+                        onClick={() => handleSignInToBook('passengers')}
+                      >
+                        <User size={14} />
+                        Sign in to Book
+                      </Button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1149,15 +1451,26 @@ export function SeatSelectionModal({
                 >
                   Back to Seats
                 </Button>
-                <Button
-                  variant="accent"
-                  size="sm"
-                  isLoading={actionLoading}
-                  onClick={() => executeHoldAndBooking(false)}
-                >
-                  Hold & Proceed to Payment
-                  <ArrowRight size={14} />
-                </Button>
+                {authState.status === 'authenticated' ? (
+                  <Button
+                    variant="accent"
+                    size="sm"
+                    isLoading={actionLoading}
+                    onClick={() => executeHoldAndBooking(false)}
+                  >
+                    Hold & Proceed to Payment
+                    <ArrowRight size={14} />
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => handleSignInToBook('passengers')}
+                  >
+                    <User size={14} />
+                    Sign in to Proceed to Payment
+                  </Button>
+                )}
               </div>
             </div>
           ) : step === 'payment' && booking ? (
@@ -1445,6 +1758,15 @@ export function SeatSelectionModal({
               </div>
 
               <div className="flex items-center justify-center gap-3 pt-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => window.print()}
+                  aria-label="Print Ticket"
+                >
+                  <Printer size={14} />
+                  Print Ticket
+                </Button>
                 <Button
                   variant="primary"
                   size="sm"

@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/Button';
 import { TrainCard } from './TrainCard';
 import { TrainCardSkeleton } from './TrainCardSkeleton';
 import type { TrainSearchResponseDTO } from '../types';
+import type { JourneyDTO } from '@/features/booking/types';
+import { useOperationalJourneys } from '../hooks/useOperationalJourneys';
 
 export interface TrainListProps {
   trains?: TrainSearchResponseDTO[];
@@ -16,8 +18,11 @@ export interface TrainListProps {
   fromCode?: string;
   toCode?: string;
   travelDate?: string;
+  journeys?: JourneyDTO[];
   onSwapAndSearch?: () => void;
   validationError?: string | null;
+  autoOpenTrain?: string;
+  onSelectDate?: (date: string) => void;
 }
 
 export function TrainList({
@@ -31,9 +36,19 @@ export function TrainList({
   fromCode = '',
   toCode = '',
   travelDate,
+  journeys,
   onSwapAndSearch,
   validationError,
+  autoOpenTrain,
+  onSelectDate,
 }: TrainListProps) {
+  const { journeys: fetchedJourneys, hasLoaded: hasJourneysLoaded, findJourney } = useOperationalJourneys(
+    travelDate,
+    { enabled: !journeys && Boolean(travelDate) },
+  );
+
+  const activeJourneys = journeys ?? fetchedJourneys;
+  const isJourneysResolved = journeys != null || hasJourneysLoaded;
   // ── 1. Initial / Guidance State (Before search is triggered) ──
   if (!hasSearched) {
     return (
@@ -231,15 +246,63 @@ export function TrainList({
         </div>
       </div>
 
+      {/* Route-level Demo Inventory Status Banner */}
+      <div className="rounded-xl border border-surface-border bg-surface-card p-3.5 text-xs text-ink-secondary flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
+        <div className="flex items-center gap-2">
+          <Train size={15} className="text-teal-600 shrink-0" aria-hidden="true" />
+          <span>
+            {activeJourneys.some((j) => trains.some((t) => t.trainId === j.trainId || t.trainNumber === j.trainNumber)) ? (
+              <span className="text-teal-800 font-semibold">
+                Demo booking inventory is active for services on this route. Look for the "Demo Booking Ready" badge.
+              </span>
+            ) : (
+              <span>
+                Timetable view (4,514 trains). Transactional demo booking inventory is currently seeded for Train 12301 on 1 December 2026.
+              </span>
+            )}
+          </span>
+        </div>
+
+        {travelDate !== '2026-12-01' && onSelectDate && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => onSelectDate('2026-12-01')}
+            className="shrink-0 text-xs text-teal-700 hover:text-teal-800 font-semibold border-teal-300 bg-teal-50 hover:bg-teal-100"
+          >
+            Switch to 1 Dec 2026 (Demo Run)
+          </Button>
+        )}
+      </div>
+
       {/* Train Cards Stack */}
       <div className="space-y-4" role="feed" aria-label="Train routes list">
-        {trains.map((train) => (
-          <TrainCard
-            key={`${train.trainId}-${train.trainNumber}`}
-            train={train}
-            travelDate={travelDate}
-          />
-        ))}
+        {trains.map((train) => {
+          const matchedJourney = activeJourneys.find(
+            (j) => j.trainId === train.trainId || (j.trainNumber && j.trainNumber.trim() === train.trainNumber.trim()),
+          ) || findJourney(train.trainId, train.trainNumber);
+
+          const isTimetableOnly = isJourneysResolved && !matchedJourney;
+          const shouldAutoOpen = Boolean(
+            autoOpenTrain &&
+              (train.trainNumber.trim() === autoOpenTrain.trim() ||
+                train.trainId.toString() === autoOpenTrain.trim()) &&
+              !isTimetableOnly,
+          );
+
+          return (
+            <TrainCard
+              key={`${train.trainId}-${train.trainNumber}`}
+              train={train}
+              travelDate={travelDate}
+              journey={matchedJourney}
+              isTimetableOnly={isTimetableOnly}
+              autoOpen={shouldAutoOpen}
+              onSelectDate={onSelectDate}
+            />
+          );
+        })}
       </div>
     </section>
   );

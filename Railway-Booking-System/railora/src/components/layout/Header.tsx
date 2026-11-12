@@ -7,7 +7,7 @@ import { useAuth } from '@/features/auth/AuthContext';
 const NAV_LINKS = [
   { label: 'Search Trains', href: ROUTES.SEARCH },
   { label: 'My Bookings', href: ROUTES.BOOKINGS },
-  { label: 'PNR Status', href: `${ROUTES.BOOKINGS}?tab=pnr` },
+  { label: 'PNR Status', href: ROUTES.PNR },
   { label: 'Tatkal Queue', href: ROUTES.WAITING_ROOM },
 ] as const;
 
@@ -54,7 +54,7 @@ export default function Header() {
 
   return (
     <header
-      className="sticky top-0 z-50 border-b border-white/10 bg-navy-700/98 backdrop-blur-md shadow-md"
+      className="sticky top-0 z-50 border-b border-navy-800/80 bg-navy-700 shadow-md backdrop-blur-md"
       role="banner"
     >
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -81,13 +81,13 @@ export default function Header() {
                 <span className="text-xl font-bold tracking-tight text-white select-none leading-none">
                   Rail<span className="text-teal-400">ora</span>
                 </span>
-                <span className="text-2xs font-medium tracking-wider text-white/50 uppercase mt-0.5">
+                <span className="text-2xs font-medium tracking-wider text-white/60 uppercase mt-0.5">
                   Railway Booking
                 </span>
               </div>
             </Link>
 
-            <span className="hidden lg:inline-flex items-center gap-1 rounded-full bg-white/5 border border-white/10 px-2.5 py-0.5 text-2xs font-medium text-white/70">
+            <span className="hidden lg:inline-flex items-center gap-1 rounded-full bg-white/10 border border-white/15 px-2.5 py-0.5 text-2xs font-medium text-white/80">
               <ShieldCheck size={11} className="text-teal-400" aria-hidden="true" />
               Verified API Backend
             </span>
@@ -102,15 +102,23 @@ export default function Header() {
               <NavLink
                 key={href}
                 to={href}
-                className={({ isActive }) =>
-                  [
+                className={({ isActive }) => {
+                  const isPnrActive =
+                    href === ROUTES.PNR &&
+                    (isActive || (location.pathname === ROUTES.BOOKINGS && location.search.includes('tab=pnr')));
+                  const isBookingsActive =
+                    href === ROUTES.BOOKINGS &&
+                    isActive &&
+                    !location.search.includes('tab=pnr');
+                  const active = href === ROUTES.PNR ? isPnrActive : href === ROUTES.BOOKINGS ? isBookingsActive : isActive;
+                  return [
                     'px-3.5 py-2 rounded-md text-sm font-medium transition-interact',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-navy-700',
-                    isActive
-                      ? 'text-white bg-white/15 font-semibold shadow-inner'
-                      : 'text-white/80 hover:text-white hover:bg-white/10',
-                  ].join(' ')
-                }
+                    active
+                      ? 'text-white bg-white/20 font-semibold shadow-inner'
+                      : 'text-white/85 hover:text-white hover:bg-white/10',
+                  ].join(' ');
+                }}
               >
                 {label}
               </NavLink>
@@ -120,13 +128,13 @@ export default function Header() {
           <div className="hidden md:flex md:items-center md:gap-3" aria-label="Account actions">
             {authState.status === 'authenticated' ? (
               <>
-                <span className="max-w-40 truncate text-sm font-medium text-white/80">
+                <span className="max-w-40 truncate text-sm font-medium text-white/90">
                   {authState.user.fullName}
                 </span>
                 <button
                   type="button"
                   onClick={logout}
-                  className="rounded-md px-3 py-1.5 text-sm font-medium text-white/80 transition-interact hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-navy-700"
+                  className="rounded-md px-3 py-1.5 text-sm font-medium text-white/85 transition-interact hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-navy-700"
                 >
                   Sign out
                 </button>
@@ -135,7 +143,7 @@ export default function Header() {
               <>
                 <Link
                   to={ROUTES.LOGIN}
-                  className="rounded-md px-3 py-1.5 text-sm font-medium text-white/80 transition-interact hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-navy-700"
+                  className="rounded-md px-3 py-1.5 text-sm font-semibold text-white/85 transition-interact hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-navy-700"
                 >
                   Sign in
                 </Link>
@@ -155,7 +163,7 @@ export default function Header() {
           {/* ── Mobile menu toggle button ── */}
           <button
             type="button"
-            className="p-2 rounded-lg text-white/80 hover:text-white hover:bg-white/10
+            className="p-2 rounded-lg text-white/90 hover:text-white hover:bg-white/10
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-navy-700
                        md:hidden transition-interact"
             aria-label={mobileOpen ? 'Close navigation menu' : 'Open navigation menu'}
@@ -192,17 +200,25 @@ export default function Header() {
                     key={href}
                     to={href}
                     onClick={() => setMobileOpen(false)}
-                    className={({ isActive }) =>
-                      [
+                    className={({ isActive }) => {
+                      const isPnrActive =
+                        href === ROUTES.PNR &&
+                        (isActive || (location.pathname === ROUTES.BOOKINGS && location.search.includes('tab=pnr')));
+                      const isBookingsActive =
+                        href === ROUTES.BOOKINGS &&
+                        isActive &&
+                        !location.search.includes('tab=pnr');
+                      const active = href === ROUTES.PNR ? isPnrActive : href === ROUTES.BOOKINGS ? isBookingsActive : isActive;
+                      return [
                         'flex items-center justify-between rounded-lg px-3.5 py-2.5 text-sm font-medium transition-interact',
-                        isActive
-                          ? 'bg-white/15 text-white font-semibold'
-                          : 'text-white/80 hover:bg-white/10 hover:text-white',
-                      ].join(' ')
-                    }
+                        active
+                          ? 'bg-white/20 text-white font-semibold'
+                          : 'text-white/85 hover:bg-white/10 hover:text-white',
+                      ].join(' ');
+                    }}
                   >
                     <span>{label}</span>
-                    <ArrowRight size={14} className="text-white/40" aria-hidden="true" />
+                    <ArrowRight size={14} className="text-white/60" aria-hidden="true" />
                   </NavLink>
                 ))}
               </div>
