@@ -1,9 +1,12 @@
 import apiClient from '@/lib/api-client';
 import { API_PATHS } from '@/lib/constants';
 import type {
+  BatchHoldSeatRequestDTO,
   BookingDetailResponseDTO,
   BookingResponseDTO,
   CreateBookingRequestDTO,
+  FareQuoteRequestDTO,
+  FareQuoteResponseDTO,
   HoldSeatRequestDTO,
   JourneyDTO,
   JourneyStopDTO,
@@ -16,6 +19,7 @@ import type {
   SeatAvailabilityDTO,
   SimulatedPaymentRequestDTO,
   SimulatedPaymentSummaryDTO,
+  TravelClassAvailabilityDTO,
 } from './types';
 
 export const bookingApi = {
@@ -36,19 +40,43 @@ export const bookingApi = {
   },
 
   /**
-   * Get seat availability for a journey and optional travel segment.
+   * Get seat availability for a journey and optional travel segment, optionally filtered by travel class and coach.
    */
   async getJourneySeats(
     journeyId: number,
     boardingStopId?: number,
     alightingStopId?: number,
+    travelClass?: string,
+    coachNumber?: string,
   ): Promise<SeatAvailabilityDTO[]> {
     const response = await apiClient.get<SeatAvailabilityDTO[]>(API_PATHS.JOURNEYS.SEATS(journeyId), {
       params: {
         boardingJourneyStopId: boardingStopId,
         alightingJourneyStopId: alightingStopId,
+        travelClass,
+        coachNumber,
       },
     });
+    return response.data;
+  },
+
+  /**
+   * Get class-grouped coach and seat availability for a journey and optional travel segment.
+   */
+  async getJourneyClasses(
+    journeyId: number,
+    boardingStopId?: number,
+    alightingStopId?: number,
+  ): Promise<TravelClassAvailabilityDTO[]> {
+    const response = await apiClient.get<TravelClassAvailabilityDTO[]>(
+      API_PATHS.JOURNEYS.CLASSES(journeyId),
+      {
+        params: {
+          boardingJourneyStopId: boardingStopId,
+          alightingJourneyStopId: alightingStopId,
+        },
+      },
+    );
     return response.data;
   },
 
@@ -75,10 +103,45 @@ export const bookingApi = {
   },
 
   /**
-   * Create an authenticated booking from an active seat hold.
+   * Place an authenticated batch hold on multiple seats for a journey segment.
+   * Attaches X-Tatkal-Admission header when an admission token/pass is provided.
    */
-  async createBooking(request: CreateBookingRequestDTO): Promise<BookingResponseDTO> {
-    const response = await apiClient.post<BookingResponseDTO>(API_PATHS.BOOKINGS.CREATE, request);
+  async holdSeats(
+    journeyId: number,
+    request: BatchHoldSeatRequestDTO,
+    admissionPass?: string,
+  ): Promise<SeatAvailabilityDTO[]> {
+    const response = admissionPass
+      ? await apiClient.post<SeatAvailabilityDTO[]>(
+          API_PATHS.JOURNEYS.HOLD_BATCH(journeyId),
+          request,
+          { headers: { 'X-Tatkal-Admission': admissionPass } },
+        )
+      : await apiClient.post<SeatAvailabilityDTO[]>(
+          API_PATHS.JOURNEYS.HOLD_BATCH(journeyId),
+          request,
+        );
+    return response.data;
+  },
+
+  /**
+   * Create an authenticated booking from an active seat hold.
+   * Attaches X-Tatkal-Admission header when an admission token/pass is provided.
+   */
+  async createBooking(
+    request: CreateBookingRequestDTO,
+    admissionPass?: string,
+  ): Promise<BookingResponseDTO> {
+    const response = admissionPass
+      ? await apiClient.post<BookingResponseDTO>(
+          API_PATHS.BOOKINGS.CREATE,
+          request,
+          { headers: { 'X-Tatkal-Admission': admissionPass } },
+        )
+      : await apiClient.post<BookingResponseDTO>(
+          API_PATHS.BOOKINGS.CREATE,
+          request,
+        );
     return response.data;
   },
 
@@ -197,6 +260,14 @@ export const bookingApi = {
       API_PATHS.BOOKINGS.LIST,
       { params: { page, size } },
     );
+    return response.data;
+  },
+
+  /**
+   * Get dynamic fare calculation quote for a journey, class, and passenger count.
+   */
+  async getFareQuote(params: FareQuoteRequestDTO): Promise<FareQuoteResponseDTO> {
+    const response = await apiClient.get<FareQuoteResponseDTO>(API_PATHS.FARE.QUOTE, { params });
     return response.data;
   },
 

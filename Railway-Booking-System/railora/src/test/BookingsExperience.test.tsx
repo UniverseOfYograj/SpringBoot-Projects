@@ -469,4 +469,71 @@ describe('BookingsPage experience', () => {
     expect(mockedBookingApi.getBookingByPnr).toHaveBeenCalledWith('8492019482');
     expect(await screen.findByText('12601 — Mangalore Mail')).toBeInTheDocument();
   });
+
+  it('renders multi-passenger booking card with passenger roster and seats count', async () => {
+    setSession(testTokens);
+    const multiPassengerResponse: PageResponseDTO<BookingDetailResponseDTO> = {
+      content: [
+        {
+          ...mockBookingsPageResponse.content[0],
+          bookingRef: 'BKG-20261026-MULTI',
+          pnr: '9998887776',
+          passengers: [
+            {
+              passengerId: 1,
+              fullName: 'Aarav Sharma',
+              age: 29,
+              gender: 'MALE',
+              berthPreference: 'LOWER',
+              seatId: 501,
+              seatNumber: 24,
+              seatType: 'LOWER',
+              coachId: 1,
+              coachNumber: 'B1',
+              coachType: '3A',
+              seatAllocationId: 701,
+            },
+            {
+              passengerId: 2,
+              fullName: 'Pooja Sharma',
+              age: 27,
+              gender: 'FEMALE',
+              berthPreference: 'UPPER',
+              seatId: 502,
+              seatNumber: 25,
+              seatType: 'UPPER',
+              coachId: 1,
+              coachNumber: 'B1',
+              coachType: '3A',
+              seatAllocationId: 702,
+            },
+          ],
+        },
+      ],
+      page: 0,
+      size: 10,
+      totalElements: 1,
+      totalPages: 1,
+      first: true,
+      last: true,
+      hasNext: false,
+      hasPrevious: false,
+    };
+    mockedBookingApi.getBookingHistory.mockResolvedValueOnce(multiPassengerResponse);
+
+    render(
+      <MemoryRouter initialEntries={['/bookings']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bookings" element={<BookingsPage />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Passenger Roster (2)')).toBeInTheDocument();
+    expect(screen.getByText('Aarav Sharma')).toBeInTheDocument();
+    expect(screen.getByText('Pooja Sharma')).toBeInTheDocument();
+    expect(screen.getByText(/2 berths \(Coach B1\)/i)).toBeInTheDocument();
+  });
 });

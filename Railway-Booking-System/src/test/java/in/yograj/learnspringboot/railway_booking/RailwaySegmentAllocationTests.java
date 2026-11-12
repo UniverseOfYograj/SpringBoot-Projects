@@ -14,6 +14,7 @@ import in.yograj.learnspringboot.railway_booking.service.TrainRouteService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import java.math.BigDecimal;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -81,6 +82,11 @@ class RailwaySegmentAllocationTests {
                 train.getTrainId(), null, null, serviceDate, null, null, route.trainRouteId()));
         List<JourneyStop> runStops = journeyStopRepository
                 .findByJourney_JourneyIdOrderByStopSequence(journey.journeyId());
+        runStops.get(0).setDistanceFromOriginKm(BigDecimal.ZERO);
+        runStops.get(1).setDistanceFromOriginKm(new BigDecimal("50.00"));
+        runStops.get(2).setDistanceFromOriginKm(new BigDecimal("100.00"));
+        runStops.get(3).setDistanceFromOriginKm(new BigDecimal("200.00"));
+        journeyStopRepository.saveAll(runStops);
         assertEquals(LocalDateTime.of(serviceDate.plusDays(1), LocalTime.of(5, 30)),
                 runStops.get(3).getArrivalAt());
 

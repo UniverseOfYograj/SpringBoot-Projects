@@ -1,5 +1,6 @@
 package in.yograj.learnspringboot.railway_booking.service;
 
+import java.math.BigDecimal;
 import in.yograj.learnspringboot.railway_booking.dto.BookingResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.CreateBookingRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.CreateTrainRouteRequestDTO;
@@ -100,6 +101,12 @@ class SeatHoldReaperTests {
 
         this.journeyId = journey.journeyId();
         this.runStops = journeyStopRepository.findByJourney_JourneyIdOrderByStopSequence(journeyId);
+        if (runStops.size() >= 3) {
+            runStops.get(0).setDistanceFromOriginKm(BigDecimal.ZERO);
+            runStops.get(1).setDistanceFromOriginKm(new BigDecimal("100.00"));
+            runStops.get(2).setDistanceFromOriginKm(new BigDecimal("200.00"));
+            journeyStopRepository.saveAll(runStops);
+        }
         this.inventories = inventoryRepository.findByJourney_JourneyId(journeyId);
     }
 

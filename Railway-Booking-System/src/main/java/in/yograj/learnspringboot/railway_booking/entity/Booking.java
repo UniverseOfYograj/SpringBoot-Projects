@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "bookings")
@@ -39,6 +41,9 @@ public class Booking {
     @JoinColumn(name = "seat_allocation_id", unique = true)
     private SeatAllocation seatAllocation;
 
+    @OneToMany(mappedBy = "booking", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private List<Passenger> passengers = new ArrayList<>();
+
     @Column(name = "booking_ref", nullable = false, unique = true, length = 40)
     private String bookingRef;
 
@@ -53,6 +58,12 @@ public class Booking {
 
     @Column(name = "amount", precision = 10, scale = 2)
     private BigDecimal amount;
+
+    @Column(name = "fare_breakdown_json", columnDefinition = "TEXT")
+    private String fareBreakdownJson;
+
+    @Column(name = "distance_km")
+    private Integer distanceKm;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -116,8 +127,27 @@ public class Booking {
         this.seatAllocation = seatAllocation;
     }
 
+    public List<Passenger> getPassengers() {
+        return passengers;
+    }
+
+    public void setPassengers(List<Passenger> passengers) {
+        this.passengers = passengers;
+    }
+
+    public void addPassenger(Passenger passenger) {
+        if (passenger != null) {
+            passengers.add(passenger);
+            passenger.setBooking(this);
+        }
+    }
+
     public String getBookingRef() {
         return bookingRef;
+    }
+
+    public void setBookingRef(String bookingRef) {
+        this.bookingRef = bookingRef;
     }
 
     public String getPnr() {
@@ -126,10 +156,6 @@ public class Booking {
 
     public void setPnr(String pnr) {
         this.pnr = pnr;
-    }
-
-    public void setBookingRef(String bookingRef) {
-        this.bookingRef = bookingRef;
     }
 
     public String getBookingStatus() {
@@ -154,6 +180,22 @@ public class Booking {
 
     public void setAmount(BigDecimal amount) {
         this.amount = amount;
+    }
+
+    public String getFareBreakdownJson() {
+        return fareBreakdownJson;
+    }
+
+    public void setFareBreakdownJson(String fareBreakdownJson) {
+        this.fareBreakdownJson = fareBreakdownJson;
+    }
+
+    public Integer getDistanceKm() {
+        return distanceKm;
+    }
+
+    public void setDistanceKm(Integer distanceKm) {
+        this.distanceKm = distanceKm;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -2,6 +2,7 @@ package in.yograj.learnspringboot.railway_booking.entity;
 
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
@@ -36,6 +37,9 @@ public class JourneyStop {
 
     @Column(name = "departure_at")
     private LocalDateTime departureAt;
+
+    @Column(name = "distance_from_origin_km", precision = 8, scale = 2)
+    private BigDecimal distanceFromOriginKm;
 
     public Long getJourneyStopId() {
         return journeyStopId;
@@ -91,5 +95,13 @@ public class JourneyStop {
 
     public void setDepartureAt(LocalDateTime departureAt) {
         this.departureAt = departureAt;
+    }
+
+    public BigDecimal getDistanceFromOriginKm() {
+        return distanceFromOriginKm;
+    }
+
+    public void setDistanceFromOriginKm(BigDecimal distanceFromOriginKm) {
+        this.distanceFromOriginKm = distanceFromOriginKm;
     }
 }

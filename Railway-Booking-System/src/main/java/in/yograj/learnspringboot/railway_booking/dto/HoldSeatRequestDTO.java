@@ -8,7 +8,9 @@ public record HoldSeatRequestDTO(
         @Min(value = 1, message = "Hold duration in minutes must be at least 1") Integer holdMinutes,
         Long boardingJourneyStopId,
         Long alightingJourneyStopId,
-        BookingMode bookingMode
+        BookingMode bookingMode,
+        String travelClass,
+        String coachNumber
 ) {
     public HoldSeatRequestDTO {
         bookingMode = bookingMode == null ? BookingMode.GENERAL : bookingMode;
@@ -16,6 +18,16 @@ public record HoldSeatRequestDTO(
 
     public HoldSeatRequestDTO(Long seatId, Integer holdMinutes, Long boardingJourneyStopId,
                               Long alightingJourneyStopId) {
-        this(seatId, holdMinutes, boardingJourneyStopId, alightingJourneyStopId, BookingMode.GENERAL);
+        this(seatId, holdMinutes, boardingJourneyStopId, alightingJourneyStopId, BookingMode.GENERAL, null, null);
+    }
+
+    public HoldSeatRequestDTO(Long seatId, Integer holdMinutes, Long boardingJourneyStopId,
+                              Long alightingJourneyStopId, BookingMode bookingMode) {
+        this(seatId, holdMinutes, boardingJourneyStopId, alightingJourneyStopId, bookingMode, null, null);
+    }
+
+    public HoldSeatRequestDTO(Long seatId, Integer holdMinutes, Long boardingJourneyStopId,
+                              Long alightingJourneyStopId, String travelClass, String coachNumber) {
+        this(seatId, holdMinutes, boardingJourneyStopId, alightingJourneyStopId, BookingMode.GENERAL, travelClass, coachNumber);
     }
 }

@@ -116,10 +116,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/webhooks/razorpay").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/users/register").permitAll()
 
+                        .requestMatchers(HttpMethod.GET, "/api/fare/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/fare/quote").permitAll()
+
                         .requestMatchers("/api/tatkal/**").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/journeys", "/api/journeys/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/journeys").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.POST, "/api/journeys/*/seats/hold").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/journeys/*/seats/hold", "/api/journeys/*/seats/hold-batch").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/journeys/*/seats/release", "/api/journeys/*/seats/seed").hasRole("ADMIN")
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/users").hasRole("ADMIN")

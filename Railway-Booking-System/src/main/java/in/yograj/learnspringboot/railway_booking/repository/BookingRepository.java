@@ -17,16 +17,20 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 
     boolean existsBySeatAllocation_SeatAllocationIdAndBookingStatus(Long seatAllocationId, String bookingStatus);
 
+    @Query("SELECT CASE WHEN COUNT(b) > 0 THEN true ELSE false END FROM Booking b LEFT JOIN b.passengers p WHERE (b.seatAllocation.seatAllocationId = :seatAllocationId OR p.seatAllocation.seatAllocationId = :seatAllocationId) AND b.bookingStatus = :bookingStatus")
+    boolean existsByAllocationIdAndBookingStatus(@Param("seatAllocationId") Long seatAllocationId, @Param("bookingStatus") String bookingStatus);
+
     Optional<Booking> findBySeatAllocation_SeatAllocationId(Long seatAllocationId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @EntityGraph(attributePaths = {"seatAllocation", "user", "journey", "coach", "seat"})
-    @Query("SELECT b FROM Booking b WHERE b.seatAllocation.seatAllocationId = :seatAllocationId")
+    @EntityGraph(attributePaths = {"seatAllocation", "user", "journey", "coach", "seat", "passengers"})
+    @Query("SELECT DISTINCT b FROM Booking b LEFT JOIN b.passengers p WHERE b.seatAllocation.seatAllocationId = :seatAllocationId OR p.seatAllocation.seatAllocationId = :seatAllocationId")
     Optional<Booking> findBySeatAllocationIdForUpdate(@Param("seatAllocationId") Long seatAllocationId);
 
     @EntityGraph(attributePaths = {
             "seatAllocation", "user", "journey", "journey.train",
-            "journey.fromStation", "journey.toStation", "coach", "seat"
+            "journey.fromStation", "journey.toStation", "coach", "seat",
+            "passengers", "passengers.seat", "passengers.coach", "passengers.seatAllocation"
     })
     Optional<Booking> findByBookingRef(String bookingRef);
 
@@ -34,27 +38,31 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 
     @EntityGraph(attributePaths = {
             "seatAllocation", "user", "journey", "journey.train",
-            "journey.fromStation", "journey.toStation", "coach", "seat"
+            "journey.fromStation", "journey.toStation", "coach", "seat",
+            "passengers", "passengers.seat", "passengers.coach", "passengers.seatAllocation"
     })
     Optional<Booking> findByPnr(String pnr);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @EntityGraph(attributePaths = {
             "seatAllocation", "user", "journey", "journey.train",
-            "journey.fromStation", "journey.toStation", "coach", "seat"
+            "journey.fromStation", "journey.toStation", "coach", "seat",
+            "passengers", "passengers.seat", "passengers.coach", "passengers.seatAllocation"
     })
     @Query("SELECT b FROM Booking b WHERE b.bookingRef = :bookingRef")
     Optional<Booking> findByBookingRefForUpdate(@Param("bookingRef") String bookingRef);
 
     @EntityGraph(attributePaths = {
             "seatAllocation", "user", "journey", "journey.train",
-            "journey.fromStation", "journey.toStation", "coach", "seat"
+            "journey.fromStation", "journey.toStation", "coach", "seat",
+            "passengers", "passengers.seat", "passengers.coach", "passengers.seatAllocation"
     })
     Page<Booking> findByUser_UserId(Long userId, Pageable pageable);
 
     @EntityGraph(attributePaths = {
             "seatAllocation", "user", "journey", "journey.train",
-            "journey.fromStation", "journey.toStation", "coach", "seat"
+            "journey.fromStation", "journey.toStation", "coach", "seat",
+            "passengers", "passengers.seat", "passengers.coach", "passengers.seatAllocation"
     })
     Page<Booking> findAll(Pageable pageable);
 }

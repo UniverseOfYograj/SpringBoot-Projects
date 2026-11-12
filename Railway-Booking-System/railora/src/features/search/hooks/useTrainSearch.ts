@@ -35,21 +35,24 @@ export function useTrainSearch(
     queryFn: ({ signal }) => searchTrains(normalizedFrom, normalizedTo, signal),
     enabled: isExplicitlyEnabled && canExecute,
     staleTime: 5 * 60 * 1000, // Timetable data is stable for 5 minutes
-    retry: (failureCount, error: any) => {
+    retry: (failureCount, error: unknown) => {
       // Don't retry aborted/cancelled requests
-      if (error?.name === 'CanceledError' || error?.name === 'AbortError') {
+      if (
+        (error instanceof Error && (error.name === 'CanceledError' || error.name === 'AbortError')) ||
+        (typeof error === 'object' && error !== null && 'name' in error && (error.name === 'CanceledError' || error.name === 'AbortError'))
+      ) {
         return false;
       }
       // Don't retry timeout errors (Axios ECONNABORTED or timeout message) to prevent retry storms
       if (
         (axios.isAxiosError(error) && (error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout'))) ||
-        error?.code === 'ECONNABORTED' ||
-        (typeof error?.message === 'string' && error.message.toLowerCase().includes('timeout'))
+        (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ECONNABORTED') ||
+        (error instanceof Error && error.message.toLowerCase().includes('timeout'))
       ) {
         return false;
       }
       // Don't retry client 4xx validation errors; retry 1x on network/5xx
-      if (error?.response?.status && error.response.status >= 400 && error.response.status < 500) {
+      if (axios.isAxiosError(error) && error.response?.status && error.response.status >= 400 && error.response.status < 500) {
         return false;
       }
       return failureCount < 1;

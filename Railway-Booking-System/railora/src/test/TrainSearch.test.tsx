@@ -4,7 +4,7 @@ import { render, renderHook, screen, fireEvent, waitFor } from '@testing-library
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AxiosError } from 'axios';
+import { AxiosError, type AxiosResponse } from 'axios';
 import { TrainSearchForm } from '@/features/search/components/TrainSearchForm';
 import { TrainCard } from '@/features/search/components/TrainCard';
 import { TrainList } from '@/features/search/components/TrainList';
@@ -568,7 +568,7 @@ describe('useTrainSearch hook — timeout retry suppression', () => {
       'ERR_BAD_RESPONSE',
       undefined,
       undefined,
-      { status: 500, statusText: 'Internal Server Error' } as any,
+      { status: 500, statusText: 'Internal Server Error' } as unknown as AxiosResponse,
     );
     const searchTrainsSpy = vi.spyOn(api, 'searchTrains').mockRejectedValue(serverError);
 
@@ -593,7 +593,7 @@ describe('useTrainSearch hook — timeout retry suppression', () => {
       'ERR_BAD_REQUEST',
       undefined,
       undefined,
-      { status: 400, statusText: 'Bad Request' } as any,
+      { status: 400, statusText: 'Bad Request' } as unknown as AxiosResponse,
     );
     const searchTrainsSpy = vi.spyOn(api, 'searchTrains').mockRejectedValue(badRequestError);
 

@@ -344,6 +344,19 @@ public class RazorpayPaymentService {
         allocation.setStatus(BOOKED);
         allocation.setUpdatedAt(now);
         allocationRepository.save(allocation);
+
+        if (booking.getPassengers() != null && !booking.getPassengers().isEmpty()) {
+            for (in.yograj.learnspringboot.railway_booking.entity.Passenger p : booking.getPassengers()) {
+                if (p.getSeatAllocation() != null && !p.getSeatAllocation().getSeatAllocationId().equals(allocation.getSeatAllocationId())) {
+                    SeatAllocation otherAlloc = allocationRepository.findById(p.getSeatAllocation().getSeatAllocationId()).orElse(null);
+                    if (otherAlloc != null && HOLD.equalsIgnoreCase(otherAlloc.getStatus())) {
+                        otherAlloc.setStatus(BOOKED);
+                        otherAlloc.setUpdatedAt(now);
+                        allocationRepository.save(otherAlloc);
+                    }
+                }
+            }
+        }
         outboxEventService.stageEvent(
                 "BOOKING",
                 booking.getBookingRef(),

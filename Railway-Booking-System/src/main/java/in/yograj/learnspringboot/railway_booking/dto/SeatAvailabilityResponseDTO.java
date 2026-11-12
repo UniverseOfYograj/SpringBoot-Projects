@@ -7,6 +7,7 @@ public record SeatAvailabilityResponseDTO(
         Long journeyId,
         Long coachId,
         String coachNumber,
+        String coachType,
         Long seatId,
         Integer seatNumber,
         String seatType,
@@ -17,4 +18,39 @@ public record SeatAvailabilityResponseDTO(
         Long boardingJourneyStopId,
         Long alightingJourneyStopId
 ) {
+    /**
+     * Backward-compatible 13-parameter constructor for existing callers and tests.
+     */
+    public SeatAvailabilityResponseDTO(
+            Long inventoryId,
+            Long journeyId,
+            Long coachId,
+            String coachNumber,
+            Long seatId,
+            Integer seatNumber,
+            String seatType,
+            String status,
+            LocalDateTime holdExpiresAt,
+            LocalDateTime updatedAt,
+            Long seatAllocationId,
+            Long boardingJourneyStopId,
+            Long alightingJourneyStopId
+    ) {
+        this(
+                inventoryId,
+                journeyId,
+                coachId,
+                coachNumber,
+                null,
+                seatId,
+                seatNumber,
+                seatType,
+                status,
+                holdExpiresAt,
+                updatedAt,
+                seatAllocationId,
+                boardingJourneyStopId,
+                alightingJourneyStopId
+        );
+    }
 }

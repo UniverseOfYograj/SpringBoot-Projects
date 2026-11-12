@@ -440,9 +440,13 @@ export default function BookingsPage() {
                     {/* Berth & Fare details */}
                     <div className="sm:col-span-3 sm:border-l sm:border-surface-border/60 sm:pl-4 flex flex-col justify-center">
                       <div className="flex items-center justify-between sm:justify-start sm:gap-2">
-                        <span className="text-xs text-ink-muted">Berth:</span>
+                        <span className="text-xs text-ink-muted">
+                          {b.passengers && b.passengers.length > 1 ? 'Seats:' : 'Berth:'}
+                        </span>
                         <span className="font-mono text-sm font-bold text-navy-700">
-                          Coach {b.coachNumber}, #{b.seatNumber}
+                          {b.passengers && b.passengers.length > 1
+                            ? `${b.passengers.length} berths (Coach ${b.coachNumber})`
+                            : `Coach ${b.coachNumber}, #${b.seatNumber}`}
                         </span>
                       </div>
                       <div className="flex items-center justify-between sm:justify-start sm:gap-2 mt-1">
@@ -453,6 +457,41 @@ export default function BookingsPage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Passenger Roster (if multi-passenger or passengers present) */}
+                  {b.passengers && b.passengers.length > 0 && (
+                    <div className="mt-4 border-t border-surface-border/60 pt-3">
+                      <div className="text-xs font-semibold text-ink-secondary mb-2 flex items-center justify-between">
+                        <span>Passenger Roster ({b.passengers.length})</span>
+                        <span className="font-normal text-ink-muted">Coach {b.coachNumber}</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                        {b.passengers.map((p) => (
+                          <div
+                            key={p.passengerId}
+                            className="rounded-lg bg-surface-subtle/40 border border-surface-border p-2.5 text-xs"
+                          >
+                            <div className="font-semibold text-ink-primary flex items-center justify-between">
+                              <span className="truncate">{p.fullName}</span>
+                              <span className="font-mono text-teal-700 font-bold ml-1">
+                                #{p.seatNumber}
+                              </span>
+                            </div>
+                            <div className="text-2xs text-ink-muted mt-0.5 flex items-center gap-2">
+                              <span>
+                                {p.gender}, {p.age} yrs
+                              </span>
+                              {p.berthPreference && (
+                                <span className="uppercase text-[10px] bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                                  {p.berthPreference}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Pending payment action */}
                   {isPendingPayment && (
@@ -588,8 +627,15 @@ export default function BookingsPage() {
                   {confirmCancelBooking.journeyDate}
                 </div>
                 <div>
-                  Berth: Coach {confirmCancelBooking.coachNumber}, #{confirmCancelBooking.seatNumber} (
-                  {confirmCancelBooking.seatType})
+                  {confirmCancelBooking.passengers && confirmCancelBooking.passengers.length > 1 ? (
+                    <>
+                      Seats: Coach {confirmCancelBooking.coachNumber}, {confirmCancelBooking.passengers.length} berths ({confirmCancelBooking.passengers.map((p) => `#${p.seatNumber}`).join(', ')})
+                    </>
+                  ) : (
+                    <>
+                      Berth: Coach {confirmCancelBooking.coachNumber}, #{confirmCancelBooking.seatNumber} ({confirmCancelBooking.seatType})
+                    </>
+                  )}
                 </div>
               </div>
 

@@ -2,6 +2,7 @@ package in.yograj.learnspringboot.railway_booking.entity;
 
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
 import java.time.LocalTime;
 
 @Entity
@@ -35,6 +36,9 @@ public class TrainStop {
 
     @Column(name = "day_offset", nullable = false)
     private Integer dayOffset;
+
+    @Column(name = "distance_from_origin_km", precision = 8, scale = 2)
+    private BigDecimal distanceFromOriginKm;
 
     public Long getTrainStopId() {
         return trainStopId;
@@ -90,5 +94,13 @@ public class TrainStop {
 
     public void setDayOffset(Integer dayOffset) {
         this.dayOffset = dayOffset;
+    }
+
+    public BigDecimal getDistanceFromOriginKm() {
+        return distanceFromOriginKm;
+    }
+
+    public void setDistanceFromOriginKm(BigDecimal distanceFromOriginKm) {
+        this.distanceFromOriginKm = distanceFromOriginKm;
     }
 }

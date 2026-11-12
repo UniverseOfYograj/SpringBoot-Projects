@@ -105,6 +105,46 @@ describe('booking API client', () => {
     const result = await bookingApi.getJourneySeats(10, 101, 102);
     expect(result).toEqual(mockSeats);
     expect(mockGet).toHaveBeenCalledWith('/journeys/10/seats', {
+      params: {
+        boardingJourneyStopId: 101,
+        alightingJourneyStopId: 102,
+        travelClass: undefined,
+        coachNumber: undefined,
+      },
+    });
+  });
+
+  it('calls getJourneySeats with travelClass and coachNumber filters', async () => {
+    mockGet.mockResolvedValueOnce(response([]));
+    await bookingApi.getJourneySeats(10, 101, 102, '3A', 'B1');
+    expect(mockGet).toHaveBeenCalledWith('/journeys/10/seats', {
+      params: {
+        boardingJourneyStopId: 101,
+        alightingJourneyStopId: 102,
+        travelClass: '3A',
+        coachNumber: 'B1',
+      },
+    });
+  });
+
+  it('calls getJourneyClasses with segment filters', async () => {
+    const mockClasses = [
+      {
+        classCode: '3A',
+        className: 'AC 3 Tier',
+        totalSeats: 6,
+        availableSeats: 6,
+        heldSeats: 0,
+        bookedSeats: 0,
+        baseFare: 1000.0,
+        coaches: [],
+      },
+    ];
+    mockGet.mockResolvedValueOnce(response(mockClasses));
+
+    const result = await bookingApi.getJourneyClasses(10, 101, 102);
+    expect(result).toEqual(mockClasses);
+    expect(mockGet).toHaveBeenCalledWith('/journeys/10/classes', {
       params: { boardingJourneyStopId: 101, alightingJourneyStopId: 102 },
     });
   });
@@ -187,6 +227,60 @@ describe('booking API client', () => {
         },
       },
     );
+  });
+
+  it('sends holdSeats batch request and returns held seats availability', async () => {
+    const mockHeldSeats = [
+      {
+        inventoryId: 1,
+        journeyId: 10,
+        coachId: 1,
+        coachNumber: 'B1',
+        seatId: 101,
+        seatNumber: 12,
+        seatType: 'LOWER',
+        status: 'HOLD',
+        holdExpiresAt: '2026-10-26T12:10:00',
+        updatedAt: '2026-10-26T12:00:00',
+        seatAllocationId: 50,
+        boardingJourneyStopId: 101,
+        alightingJourneyStopId: 102,
+      },
+      {
+        inventoryId: 2,
+        journeyId: 10,
+        coachId: 1,
+        coachNumber: 'B1',
+        seatId: 102,
+        seatNumber: 13,
+        seatType: 'UPPER',
+        status: 'HOLD',
+        holdExpiresAt: '2026-10-26T12:10:00',
+        updatedAt: '2026-10-26T12:00:00',
+        seatAllocationId: 51,
+        boardingJourneyStopId: 101,
+        alightingJourneyStopId: 102,
+      },
+    ];
+    mockPost.mockResolvedValueOnce(response(mockHeldSeats));
+
+    const result = await bookingApi.holdSeats(10, {
+      seatIds: [101, 102],
+      holdMinutes: 10,
+      boardingJourneyStopId: 101,
+      alightingJourneyStopId: 102,
+      travelClass: '3A',
+      coachNumber: 'B1',
+    });
+    expect(result).toEqual(mockHeldSeats);
+    expect(mockPost).toHaveBeenCalledWith('/journeys/10/seats/hold-batch', {
+      seatIds: [101, 102],
+      holdMinutes: 10,
+      boardingJourneyStopId: 101,
+      alightingJourneyStopId: 102,
+      travelClass: '3A',
+      coachNumber: 'B1',
+    });
   });
 
   it('sends createBooking request and returns pending booking response', async () => {
@@ -300,5 +394,42 @@ describe('booking API client', () => {
     const result = await bookingApi.getBookingByPnr('8492019482');
     expect(result).toEqual(mockDetail);
     expect(mockGet).toHaveBeenCalledWith('/bookings/pnr/8492019482');
+  });
+
+  it('fetches dynamic fare quote from server', async () => {
+    const mockQuote = {
+      journeyId: 1,
+      travelClass: '3A',
+      className: 'AC 3 Tier',
+      distanceKm: 1447,
+      distanceSource: 'CONFIGURED_CORRIDOR',
+      passengerCount: 2,
+      perPassengerFare: {
+        baseFare: 1664.05,
+        reservationCharge: 40.0,
+        superfastCharge: 45.0,
+        tax: 87.45,
+        gstAmount: 87.45,
+        total: 1836.5,
+      },
+      bookingTotal: 3673.0,
+      currency: 'INR',
+      ratePerKm: 1.15,
+    };
+    mockGet.mockResolvedValueOnce(response(mockQuote));
+
+    const result = await bookingApi.getFareQuote({
+      journeyId: 1,
+      travelClass: '3A',
+      passengerCount: 2,
+    });
+    expect(result).toEqual(mockQuote);
+    expect(mockGet).toHaveBeenCalledWith('/fare/quote', {
+      params: {
+        journeyId: 1,
+        travelClass: '3A',
+        passengerCount: 2,
+      },
+    });
   });
 });

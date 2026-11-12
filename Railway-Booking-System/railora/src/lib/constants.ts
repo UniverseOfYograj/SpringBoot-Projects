@@ -38,7 +38,9 @@ export const API_PATHS = {
     STOPS:   (id: number) => `/journeys/${id}/stops`,
     SEATS:   (id: number) => `/journeys/${id}/seats`,
     AVAILABLE_SEATS: (id: number) => `/journeys/${id}/seats/available`,
+    CLASSES: (id: number) => `/journeys/${id}/classes`,
     HOLD:    (id: number) => `/journeys/${id}/seats/hold`,
+    HOLD_BATCH: (id: number) => `/journeys/${id}/seats/hold-batch`,
   },
   BOOKINGS: {
     LIST:    '/bookings',
@@ -53,6 +55,9 @@ export const API_PATHS = {
     RAZORPAY_ORDER: (ref: string) => `/bookings/${ref}/razorpay/order`,
     RAZORPAY_VERIFY: (ref: string) => `/bookings/${ref}/razorpay/verify`,
     CANCEL:  (ref: string) => `/bookings/${ref}/cancel`,
+  },
+  FARE: {
+    QUOTE:   '/fare/quote',
   },
   WAITING_ROOM: {
     JOIN:   '/vwr/queue/join',

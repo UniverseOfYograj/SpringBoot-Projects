@@ -125,6 +125,11 @@ class BookingCancellationLifecycleTests {
                 train.getTrainId(), null, null, serviceDate, null, null, route.trainRouteId()));
         this.journeyId = journey.journeyId();
         this.runStops = journeyStopRepository.findByJourney_JourneyIdOrderByStopSequence(journeyId);
+        runStops.get(0).setDistanceFromOriginKm(BigDecimal.ZERO);
+        runStops.get(1).setDistanceFromOriginKm(new BigDecimal("100.00"));
+        runStops.get(2).setDistanceFromOriginKm(new BigDecimal("200.00"));
+        journeyStopRepository.saveAll(runStops);
+        this.runStops = journeyStopRepository.findByJourney_JourneyIdOrderByStopSequence(journeyId);
         this.inventories = inventoryRepository.findByJourney_JourneyId(journeyId);
     }
 

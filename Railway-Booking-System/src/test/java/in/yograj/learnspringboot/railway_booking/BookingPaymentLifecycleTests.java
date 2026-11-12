@@ -179,6 +179,11 @@ class BookingPaymentLifecycleTests {
                 train.getTrainId(), null, null, serviceDate, null, null, route.trainRouteId()));
         this.journeyId = journey.journeyId();
         this.runStops = journeyStopRepository.findByJourney_JourneyIdOrderByStopSequence(journeyId);
+        runStops.get(0).setDistanceFromOriginKm(BigDecimal.ZERO);
+        runStops.get(1).setDistanceFromOriginKm(new BigDecimal("100.00"));
+        runStops.get(2).setDistanceFromOriginKm(new BigDecimal("200.00"));
+        journeyStopRepository.saveAll(runStops);
+        this.runStops = journeyStopRepository.findByJourney_JourneyIdOrderByStopSequence(journeyId);
         this.inventories = inventoryRepository.findByJourney_JourneyId(journeyId);
     }
 
@@ -207,13 +212,13 @@ class BookingPaymentLifecycleTests {
         assertEquals(created.bookingRef(), response.bookingRef());
         assertEquals("SUCCESS", response.paymentStatus());
         assertEquals("CONFIRMED", response.bookingStatus());
-        assertEquals(new BigDecimal("500.00"), response.amount());
+        assertEquals(new BigDecimal("90.00"), response.amount());
 
         // Verify database entities
         Booking updatedBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
         assertEquals("CONFIRMED", updatedBooking.getBookingStatus());
         assertEquals("SUCCESS", updatedBooking.getPaymentStatus());
-        assertEquals(new BigDecimal("500.00"), updatedBooking.getAmount());
+        assertEquals(new BigDecimal("90.00"), updatedBooking.getAmount());
 
         Long allocationId = updatedBooking.getSeatAllocation().getSeatAllocationId();
         SeatAllocation allocation = allocationRepository.findById(allocationId).orElseThrow();
@@ -224,7 +229,7 @@ class BookingPaymentLifecycleTests {
         PaymentTransaction txn = transactions.get(0);
         assertEquals("SUCCESS", txn.getStatus());
         assertEquals("MOCK_UPI", txn.getPaymentMethod());
-        assertEquals(new BigDecimal("500.00"), txn.getAmount());
+        assertEquals(new BigDecimal("90.00"), txn.getAmount());
         assertNull(txn.getFailureReason());
     }
 
@@ -235,9 +240,9 @@ class BookingPaymentLifecycleTests {
 
         BookingResponseDTO created = createPendingBookingForSeat(seatInv, user, 10);
 
-        assertEquals(new BigDecimal("500.00"), created.amount());
+        assertEquals(new BigDecimal("90.00"), created.amount());
         Booking persisted = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
-        assertEquals(new BigDecimal("500.00"), persisted.getAmount());
+        assertEquals(new BigDecimal("90.00"), persisted.getAmount());
     }
 
     @Test
@@ -621,18 +626,18 @@ class BookingPaymentLifecycleTests {
 
         // Fare is fixed on the server at booking creation, before any payment attempt.
         Booking beforePay = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
-        assertEquals(new BigDecimal("500.00"), created.amount());
-        assertEquals(new BigDecimal("500.00"), beforePay.getAmount());
+        assertEquals(new BigDecimal("90.00"), created.amount());
+        assertEquals(new BigDecimal("90.00"), beforePay.getAmount());
 
         // Process payment
         PaymentResponseDTO response = bookingService.processPayment(
                 created.bookingRef(), new PaymentRequestDTO("MOCK_UPI", null, false), user.getUsername());
 
         // Payment uses the persisted fare rather than an amount provided by the caller.
-        assertEquals(new BigDecimal("500.00"), response.amount());
+        assertEquals(new BigDecimal("90.00"), response.amount());
 
         Booking afterPay = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
-        assertEquals(new BigDecimal("500.00"), afterPay.getAmount());
+        assertEquals(new BigDecimal("90.00"), afterPay.getAmount());
     }
 
     @Test
@@ -647,7 +652,7 @@ class BookingPaymentLifecycleTests {
         txn1.setBookingRef(booking.getBookingRef());
         txn1.setTransactionRef("TXN-DB-TEST-1");
         txn1.setPaymentMethod("MOCK_UPI");
-        txn1.setAmount(new BigDecimal("500.00"));
+        txn1.setAmount(new BigDecimal("90.00"));
         txn1.setStatus("SUCCESS");
         txn1.setIdempotencyKey("dup-db-key");
         txn1.setCreatedAt(LocalDateTime.now());
@@ -658,7 +663,7 @@ class BookingPaymentLifecycleTests {
         txn2.setBookingRef(booking.getBookingRef());
         txn2.setTransactionRef("TXN-DB-TEST-2");
         txn2.setPaymentMethod("MOCK_UPI");
-        txn2.setAmount(new BigDecimal("500.00"));
+        txn2.setAmount(new BigDecimal("90.00"));
         txn2.setStatus("SUCCESS");
         txn2.setIdempotencyKey("dup-db-key");
         txn2.setCreatedAt(LocalDateTime.now());
@@ -679,7 +684,7 @@ class BookingPaymentLifecycleTests {
         txn1.setBookingRef(booking.getBookingRef());
         txn1.setTransactionRef("TXN-NULL-TEST-1");
         txn1.setPaymentMethod("MOCK_UPI");
-        txn1.setAmount(new BigDecimal("500.00"));
+        txn1.setAmount(new BigDecimal("90.00"));
         txn1.setStatus("FAILED");
         txn1.setIdempotencyKey(null);
         txn1.setCreatedAt(LocalDateTime.now());
@@ -690,7 +695,7 @@ class BookingPaymentLifecycleTests {
         txn2.setBookingRef(booking.getBookingRef());
         txn2.setTransactionRef("TXN-NULL-TEST-2");
         txn2.setPaymentMethod("MOCK_UPI");
-        txn2.setAmount(new BigDecimal("500.00"));
+        txn2.setAmount(new BigDecimal("90.00"));
         txn2.setStatus("SUCCESS");
         txn2.setIdempotencyKey(null);
         txn2.setCreatedAt(LocalDateTime.now());

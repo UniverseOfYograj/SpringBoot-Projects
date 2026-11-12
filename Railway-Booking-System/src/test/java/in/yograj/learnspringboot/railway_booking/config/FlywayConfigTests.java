@@ -44,4 +44,31 @@ class FlywayConfigTests {
                     assertThat(context).doesNotHaveBean(EntityManagerFactoryDependsOnPostProcessor.class);
                 });
     }
+
+    @Test
+    void allNineMigrationsDiscoveredInStrictSequentialOrder() {
+        JdbcDataSource ds = new JdbcDataSource();
+        ds.setURL("jdbc:h2:mem:flyway_discovery_test;DB_CLOSE_DELAY=-1");
+        ds.setUser("sa");
+        ds.setPassword("");
+
+        Flyway flyway = Flyway.configure()
+                .dataSource(ds)
+                .locations("classpath:db/migration")
+                .load();
+
+        org.flywaydb.core.api.MigrationInfo[] migrations = flyway.info().all();
+        assertThat(migrations).hasSize(9);
+        assertThat(migrations[0].getVersion().getVersion()).isEqualTo("1");
+        assertThat(migrations[1].getVersion().getVersion()).isEqualTo("2");
+        assertThat(migrations[2].getVersion().getVersion()).isEqualTo("3");
+        assertThat(migrations[3].getVersion().getVersion()).isEqualTo("4");
+        assertThat(migrations[4].getVersion().getVersion()).isEqualTo("5");
+        assertThat(migrations[5].getVersion().getVersion()).isEqualTo("6");
+        assertThat(migrations[6].getVersion().getVersion()).isEqualTo("7");
+        assertThat(migrations[7].getVersion().getVersion()).isEqualTo("8");
+        assertThat(migrations[7].getDescription()).isEqualTo("add passengers and multi seat support");
+        assertThat(migrations[8].getVersion().getVersion()).isEqualTo("9");
+        assertThat(migrations[8].getDescription()).isEqualTo("add booking fare breakdown");
+    }
 }

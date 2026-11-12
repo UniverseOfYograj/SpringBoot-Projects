@@ -127,6 +127,12 @@ class TransactionalOutboxLifecycleTests {
 
         this.journeyId = journey.journeyId();
         this.runStops = journeyStopRepository.findByJourney_JourneyIdOrderByStopSequence(journeyId);
+        if (runStops.size() >= 3) {
+            runStops.get(0).setDistanceFromOriginKm(BigDecimal.ZERO);
+            runStops.get(1).setDistanceFromOriginKm(new BigDecimal("100.00"));
+            runStops.get(2).setDistanceFromOriginKm(new BigDecimal("200.00"));
+            journeyStopRepository.saveAll(runStops);
+        }
         this.inventories = inventoryRepository.findByJourney_JourneyId(journeyId);
     }
 

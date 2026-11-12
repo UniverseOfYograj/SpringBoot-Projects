@@ -142,6 +142,11 @@ class SimulatedPaymentLifecycleTests {
                 train.getTrainId(), null, null, serviceDate, null, null, route.trainRouteId()));
         this.journeyId = journey.journeyId();
         this.runStops = journeyStopRepository.findByJourney_JourneyIdOrderByStopSequence(journeyId);
+        runStops.get(0).setDistanceFromOriginKm(BigDecimal.ZERO);
+        runStops.get(1).setDistanceFromOriginKm(new BigDecimal("100.00"));
+        runStops.get(2).setDistanceFromOriginKm(new BigDecimal("200.00"));
+        journeyStopRepository.saveAll(runStops);
+        this.runStops = journeyStopRepository.findByJourney_JourneyIdOrderByStopSequence(journeyId);
         this.inventories = inventoryRepository.findByJourney_JourneyId(journeyId);
     }
 
@@ -166,7 +171,7 @@ class SimulatedPaymentLifecycleTests {
         assertEquals(created.bookingRef(), summary.bookingRef());
         assertEquals("PENDING_PAYMENT", summary.bookingStatus());
         assertEquals("PENDING", summary.paymentStatus());
-        assertEquals(new BigDecimal("500.00"), summary.amount());
+        assertEquals(new BigDecimal("90.00"), summary.amount());
         assertEquals("SIMULATED", summary.mode());
         assertNotNull(summary.holdExpiresAt());
         assertTrue(summary.holdExpiresAt().isAfter(LocalDateTime.now()));
@@ -189,7 +194,7 @@ class SimulatedPaymentLifecycleTests {
         assertEquals("SUCCESS", response.paymentStatus());
         assertEquals("CONFIRMED", response.bookingStatus());
         assertEquals("SIMULATED", response.paymentMethod());
-        assertEquals(new BigDecimal("500.00"), response.amount());
+        assertEquals(new BigDecimal("90.00"), response.amount());
 
         // Verify database state
         Booking updatedBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
@@ -422,7 +427,7 @@ class SimulatedPaymentLifecycleTests {
                 .findFirst()
                 .orElseThrow();
         assertEquals("SIMULATED", refundTxn.getPaymentMethod());
-        assertEquals(new BigDecimal("500.00"), refundTxn.getAmount());
+        assertEquals(new BigDecimal("90.00"), refundTxn.getAmount());
 
         // Seat allocation must be released/CANCELLED
         SeatAllocation alloc = allocationRepository.findById(cancelled.seatAllocationId()).orElseThrow();

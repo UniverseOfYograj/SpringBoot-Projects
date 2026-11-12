@@ -2,9 +2,16 @@
  * Booking types strictly aligned with backend Spring Boot contracts:
  * - in.yograj.learnspringboot.railway_booking.dto.SeatAvailabilityResponseDTO
  * - in.yograj.learnspringboot.railway_booking.dto.HoldSeatRequestDTO
+ * - in.yograj.learnspringboot.railway_booking.dto.BatchHoldSeatRequestDTO
  * - in.yograj.learnspringboot.railway_booking.dto.CreateBookingRequestDTO
  * - in.yograj.learnspringboot.railway_booking.dto.BookingResponseDTO
  * - in.yograj.learnspringboot.railway_booking.dto.BookingDetailResponseDTO
+ * - in.yograj.learnspringboot.railway_booking.dto.PassengerRequestDTO
+ * - in.yograj.learnspringboot.railway_booking.dto.PassengerResponseDTO
+ * - in.yograj.learnspringboot.railway_booking.dto.TravelClassAvailabilityDTO
+ * - in.yograj.learnspringboot.railway_booking.dto.CoachAvailabilityDTO
+ * - in.yograj.learnspringboot.railway_booking.dto.FareQuoteRequestDTO
+ * - in.yograj.learnspringboot.railway_booking.dto.FareQuoteResponseDTO
  * - in.yograj.learnspringboot.railway_booking.dto.PaymentRequestDTO
  * - in.yograj.learnspringboot.railway_booking.dto.PaymentResponseDTO
  * - in.yograj.learnspringboot.railway_booking.dto.PageResponseDTO
@@ -15,6 +22,7 @@ export interface SeatAvailabilityDTO {
   journeyId: number;
   coachId: number;
   coachNumber: string;
+  coachType?: string;
   seatId: number;
   seatNumber: number;
   seatType: string;
@@ -26,20 +34,111 @@ export interface SeatAvailabilityDTO {
   alightingJourneyStopId: number | null;
 }
 
+export interface CoachAvailabilityDTO {
+  coachId: number;
+  coachNumber: string;
+  coachType: string;
+  totalSeats: number;
+  availableSeats: number;
+  heldSeats: number;
+  bookedSeats: number;
+  seats: SeatAvailabilityDTO[];
+}
+
+export interface TravelClassAvailabilityDTO {
+  classCode: string;
+  className: string;
+  totalSeats: number;
+  availableSeats: number;
+  heldSeats: number;
+  bookedSeats: number;
+  baseFare: number;
+  coaches: CoachAvailabilityDTO[];
+}
+
+export interface FareComponentDTO {
+  baseFare: number;
+  reservationCharge: number;
+  superfastCharge: number;
+  tax: number;
+  gstAmount?: number;
+  total: number;
+}
+
+export interface FareQuoteResponseDTO {
+  journeyId: number;
+  travelClass: string;
+  className: string;
+  distanceKm: number;
+  distanceSource: string;
+  passengerCount: number;
+  perPassengerFare: FareComponentDTO;
+  bookingTotal: number;
+  totalFare?: FareComponentDTO;
+  currency: string;
+  ratePerKm: number;
+}
+
+export interface FareQuoteRequestDTO {
+  journeyId: number;
+  travelClass: string;
+  passengerCount: number;
+  boardingJourneyStopId?: number;
+  alightingJourneyStopId?: number;
+}
+
 export interface HoldSeatRequestDTO {
   seatId: number;
   holdMinutes: number;
   boardingJourneyStopId?: number;
   alightingJourneyStopId?: number;
   bookingMode?: 'GENERAL' | 'TATKAL';
+  travelClass?: string;
+  coachNumber?: string;
+}
+
+export interface BatchHoldSeatRequestDTO {
+  seatIds: number[];
+  holdMinutes: number;
+  boardingJourneyStopId?: number;
+  alightingJourneyStopId?: number;
+  bookingMode?: 'GENERAL' | 'TATKAL';
+  travelClass?: string;
+  coachNumber?: string;
+}
+
+export interface PassengerRequestDTO {
+  fullName: string;
+  age: number;
+  gender: string;
+  seatId: number;
+  berthPreference?: string;
+}
+
+export interface PassengerResponseDTO {
+  passengerId: number;
+  fullName: string;
+  age: number;
+  gender: string;
+  berthPreference?: string;
+  seatId: number;
+  seatNumber: number;
+  seatType: string;
+  coachId: number;
+  coachNumber: string;
+  coachType: string;
+  seatAllocationId: number;
 }
 
 export interface CreateBookingRequestDTO {
   journeyId: number;
-  seatId: number;
+  seatId?: number;
   boardingJourneyStopId?: number;
   alightingJourneyStopId?: number;
   bookingMode?: 'GENERAL' | 'TATKAL';
+  travelClass?: string;
+  coachNumber?: string;
+  passengers?: PassengerRequestDTO[];
 }
 
 export interface BookingResponseDTO {
@@ -54,6 +153,9 @@ export interface BookingResponseDTO {
   paymentStatus: 'PENDING' | 'SUCCESS' | 'FAILED' | string;
   amount: number | null;
   createdAt: string;
+  passengers?: PassengerResponseDTO[];
+  fareBreakdown?: FareComponentDTO;
+  distanceKm?: number;
 }
 
 export interface BookingDetailResponseDTO {
@@ -83,6 +185,9 @@ export interface BookingDetailResponseDTO {
   paymentStatus: 'PENDING' | 'SUCCESS' | 'FAILED' | string;
   amount: number | null;
   createdAt: string;
+  passengers?: PassengerResponseDTO[];
+  fareBreakdown?: FareComponentDTO;
+  distanceKm?: number;
 }
 
 export interface PaymentRequestDTO {

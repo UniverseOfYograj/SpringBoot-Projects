@@ -1,17 +1,21 @@
 package in.yograj.learnspringboot.railway_booking.service;
 
-import in.yograj.learnspringboot.railway_booking.dto.SeatAvailabilityResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.BookingMode;
+import in.yograj.learnspringboot.railway_booking.dto.CoachAvailabilityDTO;
+import in.yograj.learnspringboot.railway_booking.dto.SeatAvailabilityResponseDTO;
+import in.yograj.learnspringboot.railway_booking.dto.TravelClassAvailabilityDTO;
 import in.yograj.learnspringboot.railway_booking.entity.*;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
 import in.yograj.learnspringboot.railway_booking.repository.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class SeatInventoryService {
@@ -30,6 +34,26 @@ public class SeatInventoryService {
     private final CoachRepository coachRepository;
     private final SeatRepository seatRepository;
     private final UserRepository userRepository;
+    private final FareCalculationService fareCalculationService;
+
+    @Autowired
+    public SeatInventoryService(JourneySeatInventoryRepository inventoryRepository,
+                                JourneyRepository journeyRepository,
+                                JourneyStopRepository journeyStopRepository,
+                                SeatAllocationRepository allocationRepository,
+                                CoachRepository coachRepository,
+                                SeatRepository seatRepository,
+                                UserRepository userRepository,
+                                @Autowired(required = false) FareCalculationService fareCalculationService) {
+        this.inventoryRepository = inventoryRepository;
+        this.journeyRepository = journeyRepository;
+        this.journeyStopRepository = journeyStopRepository;
+        this.allocationRepository = allocationRepository;
+        this.coachRepository = coachRepository;
+        this.seatRepository = seatRepository;
+        this.userRepository = userRepository;
+        this.fareCalculationService = fareCalculationService;
+    }
 
     public SeatInventoryService(JourneySeatInventoryRepository inventoryRepository,
                                 JourneyRepository journeyRepository,
@@ -38,24 +62,152 @@ public class SeatInventoryService {
                                 CoachRepository coachRepository,
                                 SeatRepository seatRepository,
                                 UserRepository userRepository) {
-        this.inventoryRepository = inventoryRepository;
-        this.journeyRepository = journeyRepository;
-        this.journeyStopRepository = journeyStopRepository;
-        this.allocationRepository = allocationRepository;
-        this.coachRepository = coachRepository;
-        this.seatRepository = seatRepository;
-        this.userRepository = userRepository;
+        this(inventoryRepository, journeyRepository, journeyStopRepository, allocationRepository,
+                coachRepository, seatRepository, userRepository, null);
     }
 
     @Transactional(readOnly = true)
     public List<SeatAvailabilityResponseDTO> getJourneySeatAvailability(
             Long journeyId, Long boardingStopId, Long alightingStopId) {
+        return getJourneySeatAvailability(journeyId, boardingStopId, alightingStopId, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<SeatAvailabilityResponseDTO> getJourneySeatAvailability(
+            Long journeyId, Long boardingStopId, Long alightingStopId, String travelClass, String coachNumber) {
         ensureJourneyExists(journeyId);
         JourneySegment segment = boardingStopId == null && alightingStopId == null
                 ? null : resolveSegment(journeyId, boardingStopId, alightingStopId);
+
         return inventoryRepository.findByJourney_JourneyId(journeyId).stream()
+                .filter(inv -> travelClass == null || travelClass.isBlank() ||
+                        (inv.getCoach() != null && travelClass.trim().equalsIgnoreCase(inv.getCoach().getCoachType())))
+                .filter(inv -> coachNumber == null || coachNumber.isBlank() ||
+                        (inv.getCoach() != null && coachNumber.trim().equalsIgnoreCase(inv.getCoach().getCoachNumber())))
                 .map(inventory -> mapAvailability(inventory, segment))
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<TravelClassAvailabilityDTO> getJourneyClassesAvailability(
+            Long journeyId, Long boardingStopId, Long alightingStopId) {
+        ensureJourneyExists(journeyId);
+        JourneySegment segment = boardingStopId == null && alightingStopId == null
+                ? null : resolveSegment(journeyId, boardingStopId, alightingStopId);
+
+        // Strictly scoped to the selected journey
+        List<JourneySeatInventory> inventories = inventoryRepository.findByJourney_JourneyId(journeyId);
+
+        // Map each inventory to its segment availability DTO
+        Map<Long, SeatAvailabilityResponseDTO> seatDtoMap = inventories.stream()
+                .collect(Collectors.toMap(
+                        JourneySeatInventory::getInventoryId,
+                        inv -> mapAvailability(inv, segment)
+                ));
+
+        // Group inventories by Coach preserving deterministic order
+        Map<Coach, List<JourneySeatInventory>> coachInventoriesMap = inventories.stream()
+                .collect(Collectors.groupingBy(
+                        JourneySeatInventory::getCoach,
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
+        List<CoachAvailabilityDTO> coachDtos = new ArrayList<>();
+        for (Map.Entry<Coach, List<JourneySeatInventory>> entry : coachInventoriesMap.entrySet()) {
+            Coach coach = entry.getKey();
+            List<JourneySeatInventory> coachInvs = entry.getValue();
+
+            List<SeatAvailabilityResponseDTO> coachSeats = coachInvs.stream()
+                    .map(inv -> seatDtoMap.get(inv.getInventoryId()))
+                    .sorted(Comparator.comparing(SeatAvailabilityResponseDTO::seatNumber))
+                    .toList();
+
+            int available = (int) coachSeats.stream().filter(s -> AVAILABLE.equalsIgnoreCase(s.status())).count();
+            int held = (int) coachSeats.stream().filter(s -> HOLD.equalsIgnoreCase(s.status())).count();
+            int booked = (int) coachSeats.stream().filter(s -> BOOKED.equalsIgnoreCase(s.status())).count();
+
+            coachDtos.add(new CoachAvailabilityDTO(
+                    coach.getCoachId(),
+                    coach.getCoachNumber(),
+                    coach.getCoachType(),
+                    coachSeats.size(),
+                    available,
+                    held,
+                    booked,
+                    coachSeats
+            ));
+        }
+
+        // Group CoachAvailabilityDTO by travel class (coachType)
+        Map<String, List<CoachAvailabilityDTO>> classCoachesMap = coachDtos.stream()
+                .collect(Collectors.groupingBy(
+                        c -> c.coachType() != null ? c.coachType().toUpperCase().trim() : "OTHER",
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
+        List<String> priorityOrder = List.of("1A", "2A", "3A", "3E", "CC", "SL", "2S");
+
+        List<TravelClassAvailabilityDTO> classDtos = new ArrayList<>();
+        for (Map.Entry<String, List<CoachAvailabilityDTO>> entry : classCoachesMap.entrySet()) {
+            String classCode = entry.getKey();
+            List<CoachAvailabilityDTO> coachesInClass = entry.getValue();
+
+            int totalSeats = coachesInClass.stream().mapToInt(CoachAvailabilityDTO::totalSeats).sum();
+            int availableSeats = coachesInClass.stream().mapToInt(CoachAvailabilityDTO::availableSeats).sum();
+            int heldSeats = coachesInClass.stream().mapToInt(CoachAvailabilityDTO::heldSeats).sum();
+            int bookedSeats = coachesInClass.stream().mapToInt(CoachAvailabilityDTO::bookedSeats).sum();
+
+            BigDecimal classBaseFare = null;
+            if (fareCalculationService != null) {
+                try {
+                    classBaseFare = fareCalculationService.calculateFareQuote(
+                            journeyId, classCode, 1, boardingStopId, alightingStopId).perPassengerFare().total();
+                } catch (Exception ignored) {
+                    classBaseFare = null;
+                }
+            }
+
+            classDtos.add(new TravelClassAvailabilityDTO(
+                    classCode,
+                    getClassName(classCode),
+                    totalSeats,
+                    availableSeats,
+                    heldSeats,
+                    bookedSeats,
+                    classBaseFare,
+                    coachesInClass
+            ));
+        }
+
+        // Sort by priority order, then alphabetical
+        classDtos.sort((a, b) -> {
+            int idxA = priorityOrder.indexOf(a.classCode());
+            int idxB = priorityOrder.indexOf(b.classCode());
+            if (idxA != -1 && idxB != -1) return Integer.compare(idxA, idxB);
+            if (idxA != -1) return -1;
+            if (idxB != -1) return 1;
+            return a.classCode().compareTo(b.classCode());
+        });
+
+        return classDtos;
+    }
+
+    public static String getClassName(String classCode) {
+        if (classCode == null) return "Unknown";
+        return switch (classCode.toUpperCase().trim()) {
+            case "SL" -> "Sleeper";
+            case "3A" -> "AC 3 Tier";
+            case "2A" -> "AC 2 Tier";
+            case "1A" -> "AC First Class";
+            case "3E" -> "AC 3 Economy";
+            case "CC" -> "AC Chair Car";
+            case "2S" -> "Second Seating";
+            case "EC" -> "Executive Chair Car";
+            case "GEN", "GENERAL" -> "General Unreserved";
+            default -> classCode;
+        };
     }
 
     @Transactional(readOnly = true)
@@ -67,15 +219,76 @@ public class SeatInventoryService {
     }
 
     @Transactional
+    public List<SeatAvailabilityResponseDTO> holdSeats(
+            Long journeyId, List<Long> seatIds, Integer holdMinutes,
+            Long boardingStopId, Long alightingStopId,
+            String travelClass, String coachNumber, String username) {
+        return holdSeatsBatch(journeyId, seatIds, holdMinutes, boardingStopId, alightingStopId,
+                travelClass, coachNumber, username, BookingMode.GENERAL, null);
+    }
+
+    @Transactional
+    public List<SeatAvailabilityResponseDTO> holdSeatsBatch(
+            Long journeyId, List<Long> seatIds, Integer holdMinutes,
+            Long boardingStopId, Long alightingStopId,
+            String travelClass, String coachNumber, String username) {
+        return holdSeatsBatch(journeyId, seatIds, holdMinutes, boardingStopId, alightingStopId,
+                travelClass, coachNumber, username, BookingMode.GENERAL, null);
+    }
+
+    @Transactional
+    public List<SeatAvailabilityResponseDTO> holdSeatsBatch(
+            Long journeyId, List<Long> seatIds, Integer holdMinutes,
+            Long boardingStopId, Long alightingStopId,
+            String travelClass, String coachNumber, String username,
+            BookingMode bookingMode, String admissionEntryId) {
+        if (seatIds == null || seatIds.isEmpty()) {
+            throw new BadRequestException("At least one seat ID must be specified for batch hold");
+        }
+        if (new HashSet<>(seatIds).size() != seatIds.size()) {
+            throw new BadRequestException("Duplicate seats are not allowed in hold request");
+        }
+        if (seatIds.size() > 6) {
+            throw new BadRequestException("Cannot hold more than 6 seats in a single request");
+        }
+        List<Long> sortedSeatIds = new ArrayList<>(seatIds);
+        Collections.sort(sortedSeatIds);
+
+        List<SeatAvailabilityResponseDTO> responses = new ArrayList<>();
+        for (Long seatId : sortedSeatIds) {
+            responses.add(holdSeat(journeyId, seatId, holdMinutes, boardingStopId, alightingStopId,
+                    travelClass, coachNumber, username, bookingMode, admissionEntryId));
+        }
+        return responses;
+    }
+
+    @Transactional
     public SeatAvailabilityResponseDTO holdSeat(Long journeyId, Long seatId, Integer holdMinutes,
                                                  Long boardingStopId, Long alightingStopId, String username) {
-        return holdSeat(journeyId, seatId, holdMinutes, boardingStopId, alightingStopId, username,
-                BookingMode.GENERAL, null);
+        return holdSeat(journeyId, seatId, holdMinutes, boardingStopId, alightingStopId,
+                null, null, username, BookingMode.GENERAL, null);
     }
 
     @Transactional
     public SeatAvailabilityResponseDTO holdSeat(Long journeyId, Long seatId, Integer holdMinutes,
                                                  Long boardingStopId, Long alightingStopId, String username,
+                                                 BookingMode bookingMode, String admissionEntryId) {
+        return holdSeat(journeyId, seatId, holdMinutes, boardingStopId, alightingStopId,
+                null, null, username, bookingMode, admissionEntryId);
+    }
+
+    @Transactional
+    public SeatAvailabilityResponseDTO holdSeat(Long journeyId, Long seatId, Integer holdMinutes,
+                                                 Long boardingStopId, Long alightingStopId,
+                                                 String travelClass, String coachNumber, String username) {
+        return holdSeat(journeyId, seatId, holdMinutes, boardingStopId, alightingStopId,
+                travelClass, coachNumber, username, BookingMode.GENERAL, null);
+    }
+
+    @Transactional
+    public SeatAvailabilityResponseDTO holdSeat(Long journeyId, Long seatId, Integer holdMinutes,
+                                                 Long boardingStopId, Long alightingStopId,
+                                                 String travelClass, String coachNumber, String username,
                                                  BookingMode bookingMode, String admissionEntryId) {
         if (holdMinutes == null || holdMinutes < 1) {
             throw new BadRequestException("Hold duration in minutes is required and must be >= 1");
@@ -87,6 +300,31 @@ public class SeatInventoryService {
         JourneySeatInventory inventory = inventoryRepository.findByJourneyAndSeatForUpdate(journeyId, seatId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Seat not found for journey: journeyId=" + journeyId + ", seatId=" + seatId));
+
+        // Validate travel class match if provided
+        if (travelClass != null && !travelClass.isBlank()) {
+            String expectedClass = travelClass.trim();
+            String actualClass = inventory.getCoach() != null ? inventory.getCoach().getCoachType() : null;
+            if (actualClass == null || !actualClass.equalsIgnoreCase(expectedClass)) {
+                throw new BadRequestException(
+                        "Seat #" + inventory.getSeat().getSeatNumber() + " belongs to class "
+                                + (actualClass != null ? actualClass : "UNKNOWN")
+                                + ", not requested class " + expectedClass);
+            }
+        }
+
+        // Validate coach match if provided
+        if (coachNumber != null && !coachNumber.isBlank()) {
+            String expectedCoach = coachNumber.trim();
+            String actualCoach = inventory.getCoach() != null ? inventory.getCoach().getCoachNumber() : null;
+            if (actualCoach == null || !actualCoach.equalsIgnoreCase(expectedCoach)) {
+                throw new BadRequestException(
+                        "Seat #" + inventory.getSeat().getSeatNumber() + " belongs to coach "
+                                + (actualCoach != null ? actualCoach : "UNKNOWN")
+                                + ", not requested coach " + expectedCoach);
+            }
+        }
+
         JourneySegment segment = resolveSegment(journeyId, boardingStopId, alightingStopId);
         normalizeLegacyHold(inventory);
 
@@ -326,6 +564,7 @@ public class SeatInventoryService {
                 inventory.getJourney().getJourneyId(),
                 inventory.getCoach().getCoachId(),
                 inventory.getCoach().getCoachNumber(),
+                inventory.getCoach() != null ? inventory.getCoach().getCoachType() : null,
                 inventory.getSeat().getSeatId(),
                 inventory.getSeat().getSeatNumber(),
                 inventory.getSeat().getSeatType(),
@@ -346,6 +585,7 @@ public class SeatInventoryService {
                 inventory.getJourney().getJourneyId(),
                 inventory.getCoach().getCoachId(),
                 inventory.getCoach().getCoachNumber(),
+                inventory.getCoach() != null ? inventory.getCoach().getCoachType() : null,
                 inventory.getSeat().getSeatId(),
                 inventory.getSeat().getSeatNumber(),
                 inventory.getSeat().getSeatType(),

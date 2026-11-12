@@ -2,6 +2,7 @@ package in.yograj.learnspringboot.railway_booking.service;
 
 import in.yograj.learnspringboot.railway_booking.entity.Booking;
 import in.yograj.learnspringboot.railway_booking.entity.JourneySeatInventory;
+import in.yograj.learnspringboot.railway_booking.entity.Passenger;
 import in.yograj.learnspringboot.railway_booking.entity.SeatAllocation;
 import in.yograj.learnspringboot.railway_booking.repository.BookingRepository;
 import in.yograj.learnspringboot.railway_booking.repository.JourneySeatInventoryRepository;
@@ -328,6 +329,19 @@ public class SeatHoldReaperService {
                 allocation.setUpdatedAt(now);
                 allocationRepository.save(allocation);
 
+                if (booking.getPassengers() != null) {
+                    for (Passenger p : booking.getPassengers()) {
+                        if (p.getSeatAllocation() != null && !p.getSeatAllocation().getSeatAllocationId().equals(allocationId)) {
+                            SeatAllocation otherAlloc = allocationRepository.findById(p.getSeatAllocation().getSeatAllocationId()).orElse(null);
+                            if (otherAlloc != null && STATUS_HOLD.equalsIgnoreCase(otherAlloc.getStatus())) {
+                                otherAlloc.setStatus(STATUS_EXPIRED);
+                                otherAlloc.setUpdatedAt(now);
+                                allocationRepository.save(otherAlloc);
+                            }
+                        }
+                    }
+                }
+
                 logger.info("Reaped expired hold: SeatAllocation ID {} and linked Booking {} (ref: {}) transitioned to EXPIRED",
                         allocationId, booking.getBookingId(), booking.getBookingRef());
                 return ReapResult.EXPIRED_BOOKING_AND_ALLOCATION;
@@ -335,6 +349,19 @@ public class SeatHoldReaperService {
                 allocation.setStatus(STATUS_EXPIRED);
                 allocation.setUpdatedAt(now);
                 allocationRepository.save(allocation);
+
+                if (booking.getPassengers() != null) {
+                    for (Passenger p : booking.getPassengers()) {
+                        if (p.getSeatAllocation() != null && !p.getSeatAllocation().getSeatAllocationId().equals(allocationId)) {
+                            SeatAllocation otherAlloc = allocationRepository.findById(p.getSeatAllocation().getSeatAllocationId()).orElse(null);
+                            if (otherAlloc != null && STATUS_HOLD.equalsIgnoreCase(otherAlloc.getStatus())) {
+                                otherAlloc.setStatus(STATUS_EXPIRED);
+                                otherAlloc.setUpdatedAt(now);
+                                allocationRepository.save(otherAlloc);
+                            }
+                        }
+                    }
+                }
 
                 logger.info("Reaped expired hold: SeatAllocation ID {} transitioned to EXPIRED (linked Booking {} in status {})",
                         allocationId, booking.getBookingId(), booking.getBookingStatus());
