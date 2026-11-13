@@ -7,6 +7,9 @@ import java.time.LocalTime;
 
 @Entity
 @Table(name = "journeys",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_journeys_train_date", columnNames = {"train_id", "journey_date"})
+        },
         indexes = {
                 @Index(name = "idx_journey_route_date", columnList = "from_station_id, to_station_id, journey_date"),
                 @Index(name = "idx_journey_train_date", columnList = "train_id, journey_date")
@@ -43,6 +46,9 @@ public class Journey {
 
     @Column(name = "arrival_time", nullable = false)
     private LocalTime arrivalTime;
+
+    @Column(name = "operating_days_source", length = 50)
+    private String operatingDaysSource;
 
     public Journey() {
     }
@@ -109,5 +115,13 @@ public class Journey {
 
     public void setArrivalTime(LocalTime arrivalTime) {
         this.arrivalTime = arrivalTime;
+    }
+
+    public String getOperatingDaysSource() {
+        return operatingDaysSource;
+    }
+
+    public void setOperatingDaysSource(String operatingDaysSource) {
+        this.operatingDaysSource = operatingDaysSource;
     }
 }

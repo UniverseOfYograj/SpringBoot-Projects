@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import {
   X,
   Train,
@@ -423,9 +424,28 @@ export function SeatSelectionModal({
         } catch {
           // Ignore parsing/sessionStorage errors
         }
-      } catch {
+      } catch (err: unknown) {
         if (!active) return;
-        setError('Failed to load seat availability. Please try again.');
+        let errorMessage = 'Failed to load seat availability. Please try again.';
+        if (axios.isAxiosError<{ message?: string }>(err)) {
+          const serverMessage = err.response?.data?.message;
+          if (serverMessage && typeof serverMessage === 'string') {
+            const firstLine = serverMessage.split('\n')[0].trim();
+            if (
+              firstLine.length > 0 &&
+              !firstLine.includes('Exception:') &&
+              !firstLine.includes('at in.yograj') &&
+              !firstLine.includes('org.hibernate')
+            ) {
+              errorMessage = firstLine;
+            }
+          } else if (err.message && !err.message.includes('status code 500')) {
+            errorMessage = err.message;
+          }
+        } else if (err instanceof Error && err.message) {
+          errorMessage = err.message;
+        }
+        setError(errorMessage);
       } finally {
         if (active) setLoading(false);
       }
@@ -1121,7 +1141,8 @@ export function SeatSelectionModal({
                   <div className="flex items-center justify-between font-semibold mb-1">
                     <span className="flex items-center gap-1 text-teal-800">
                       <Receipt size={13} />
-                      Server Fare Breakdown ({fareQuote.travelClass} • {fareQuote.distanceKm} km):
+                      Railora Demo Fare Quote ({fareQuote.travelClass} • {fareQuote.distanceKm} km
+                      {fareQuote.distanceSource === 'ESTIMATED_RUN_DURATION' ? ' · Estimated' : ''}):
                     </span>
                     <span className="font-mono text-xs text-teal-900 font-bold">
                       ₹{(fareQuote.perPassengerFare.total).toFixed(2)} / passenger
@@ -1133,6 +1154,9 @@ export function SeatSelectionModal({
                     <div>Superfast: <span className="font-mono font-semibold text-ink-primary">₹{fareQuote.perPassengerFare.superfastCharge.toFixed(2)}</span></div>
                     <div>GST: <span className="font-mono font-semibold text-ink-primary">₹{(fareQuote.perPassengerFare.tax ?? fareQuote.perPassengerFare.gstAmount ?? 0).toFixed(2)}</span></div>
                   </div>
+                  <p className="mt-1.5 pt-1 border-t border-teal-200/30 text-3xs text-ink-muted">
+                    Simulated fare calculated by Railora Demo Engine for demonstration purposes. Not an official Indian Railways fare.
+                  </p>
                 </div>
               )}
 
@@ -1540,13 +1564,16 @@ export function SeatSelectionModal({
                   <div className="border-t border-surface-border/60 pt-2.5">
                     <span className="text-2xs font-semibold text-ink-secondary block mb-1.5 flex items-center gap-1">
                       <Receipt size={13} className="text-teal-600" />
-                      Itemized Server Fare Breakdown:
+                      Railora Demo Fare Breakdown:
                     </span>
                     <div className="rounded-lg bg-white border border-surface-border p-2.5 text-2xs space-y-1">
                       {(booking.distanceKm ?? fareQuote?.distanceKm) && (
                         <div className="flex justify-between text-ink-muted">
                           <span>Distance:</span>
-                          <span className="font-mono text-ink-primary font-semibold">{booking.distanceKm ?? fareQuote?.distanceKm} km</span>
+                          <span className="font-mono text-ink-primary font-semibold">
+                            {booking.distanceKm ?? fareQuote?.distanceKm} km
+                            {fareQuote?.distanceSource === 'ESTIMATED_RUN_DURATION' ? ' (Estimated)' : ''}
+                          </span>
                         </div>
                       )}
                       <div className="flex justify-between text-ink-muted">

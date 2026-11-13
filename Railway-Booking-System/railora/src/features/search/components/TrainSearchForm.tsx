@@ -8,26 +8,33 @@ export interface TrainSearchFormProps {
   initialFrom?: string;
   initialTo?: string;
   initialDate?: string;
+  initialQuery?: string;
   isLoading?: boolean;
-  onSearch: (params: { from: string; to: string; date: string }) => void;
+  onSearch: (params: { from?: string; to?: string; query?: string; date: string }) => void;
 }
 
 export function TrainSearchForm({
   initialFrom = '',
   initialTo = '',
   initialDate = '',
+  initialQuery = '',
   isLoading = false,
   onSearch,
 }: TrainSearchFormProps) {
   // Default to today if no date provided
   const todayStr = new Date().toISOString().split('T')[0];
 
+  const [searchMode, setSearchMode] = useState<'station' | 'query'>(
+    initialQuery && !initialFrom && !initialTo ? 'query' : 'station',
+  );
   const [from, setFrom] = useState(initialFrom.toUpperCase());
   const [to, setTo] = useState(initialTo.toUpperCase());
+  const [query, setQuery] = useState(initialQuery);
   const [date, setDate] = useState(initialDate || todayStr);
 
   const [fromError, setFromError] = useState<string | null>(null);
   const [toError, setToError] = useState<string | null>(null);
+  const [queryError, setQueryError] = useState<string | null>(null);
   const [dateError, setDateError] = useState<string | null>(null);
   const [generalError, setGeneralError] = useState<string | null>(null);
 
@@ -39,6 +46,13 @@ export function TrainSearchForm({
   useEffect(() => {
     setTo(initialTo.toUpperCase());
   }, [initialTo]);
+
+  useEffect(() => {
+    if (initialQuery) {
+      setQuery(initialQuery);
+      setSearchMode('query');
+    }
+  }, [initialQuery]);
 
   useEffect(() => {
     if (initialDate) {
@@ -57,6 +71,7 @@ export function TrainSearchForm({
   };
 
   const handleSelectRoute = (routeFrom: string, routeTo: string) => {
+    setSearchMode('station');
     setFrom(routeFrom);
     setTo(routeTo);
     setFromError(null);
@@ -72,6 +87,20 @@ export function TrainSearchForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (searchMode === 'query') {
+      const normalizedQuery = query.trim();
+      if (!normalizedQuery || normalizedQuery.length < 2) {
+        setQueryError('Please enter at least 2 characters (train number or name).');
+        return;
+      }
+      setQueryError(null);
+      const dErr = date ? validateTravelDate(date) : null;
+      setDateError(dErr);
+      if (dErr) return;
+      onSearch({ query: normalizedQuery, date });
+      return;
+    }
 
     const normalizedFrom = from.trim().toUpperCase();
     const normalizedTo = to.trim().toUpperCase();
@@ -100,88 +129,162 @@ export function TrainSearchForm({
 
   return (
     <div className="w-full rounded-2xl bg-surface-card p-6 shadow-sm border border-surface-border">
+      {/* Search Mode Toggle */}
+      <div className="mb-5 flex items-center gap-1 rounded-lg bg-surface-muted p-1 w-fit border border-surface-border">
+        <button
+          type="button"
+          onClick={() => {
+            setSearchMode('station');
+            setGeneralError(null);
+          }}
+          className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-interact cursor-pointer ${
+            searchMode === 'station'
+              ? 'bg-white text-navy-800 shadow-2xs border border-surface-border/60'
+              : 'text-ink-secondary hover:text-ink-primary'
+          }`}
+        >
+          Station to Station
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSearchMode('query');
+            setGeneralError(null);
+          }}
+          className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-interact cursor-pointer ${
+            searchMode === 'query'
+              ? 'bg-white text-navy-800 shadow-2xs border border-surface-border/60'
+              : 'text-ink-secondary hover:text-ink-primary'
+          }`}
+        >
+          Train Number or Name
+        </button>
+      </div>
+
       <form onSubmit={handleSubmit} noValidate>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+        {searchMode === 'station' ? (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
 
-          {/* Origin Station */}
-          <div className="lg:col-span-4">
-            <Input
-              id="search-from-station"
-              label="Origin Station"
-              placeholder="e.g. HWH"
-              value={from}
-              maxLength={30}
-              onChange={(e) => {
-                setFrom(e.target.value.toUpperCase());
-                if (fromError) setFromError(null);
-                if (generalError) setGeneralError(null);
-              }}
-              error={fromError || undefined}
-              helperText="Enter 2–30 character station code"
-              leftIcon={<MapPin size={16} />}
-              required
-            />
-          </div>
-
-          {/* Swap Button */}
-          <div className="flex items-center justify-center lg:col-span-1 lg:pb-5">
-            <button
-              type="button"
-              onClick={handleSwap}
-              aria-label="Swap origin and destination"
-              title="Swap stations"
-              className="group flex h-10 w-10 items-center justify-center rounded-full
-                         border border-surface-border bg-surface-muted text-ink-secondary
-                         hover:bg-slate-200 hover:text-ink-primary hover:border-surface-subtle
-                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500
-                         active:scale-95 transition-interact cursor-pointer"
-            >
-              <ArrowLeftRight
-                size={16}
-                className="transition-transform duration-200 group-hover:rotate-180"
-                aria-hidden="true"
+            {/* Origin Station */}
+            <div className="lg:col-span-4">
+              <Input
+                id="search-from-station"
+                label="Origin Station"
+                placeholder="e.g. HWH"
+                value={from}
+                maxLength={30}
+                onChange={(e) => {
+                  setFrom(e.target.value.toUpperCase());
+                  if (fromError) setFromError(null);
+                  if (generalError) setGeneralError(null);
+                }}
+                error={fromError || undefined}
+                helperText="Enter 2–30 character station code"
+                leftIcon={<MapPin size={16} />}
+                required
               />
-            </button>
-          </div>
+            </div>
 
-          {/* Destination Station */}
-          <div className="lg:col-span-4">
-            <Input
-              id="search-to-station"
-              label="Destination Station"
-              placeholder="e.g. NDLS"
-              value={to}
-              maxLength={30}
-              onChange={(e) => {
-                setTo(e.target.value.toUpperCase());
-                if (toError) setToError(null);
-                if (generalError) setGeneralError(null);
-              }}
-              error={toError || undefined}
-              helperText="Enter 2–30 character station code"
-              leftIcon={<MapPin size={16} />}
-              required
-            />
-          </div>
+            {/* Swap Button */}
+            <div className="flex items-center justify-center lg:col-span-1 lg:pb-5">
+              <button
+                type="button"
+                onClick={handleSwap}
+                aria-label="Swap origin and destination"
+                title="Swap stations"
+                className="group flex h-10 w-10 items-center justify-center rounded-full
+                           border border-surface-border bg-surface-muted text-ink-secondary
+                           hover:bg-slate-200 hover:text-ink-primary hover:border-surface-subtle
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500
+                           active:scale-95 transition-interact cursor-pointer"
+              >
+                <ArrowLeftRight
+                  size={16}
+                  className="transition-transform duration-200 group-hover:rotate-180"
+                  aria-hidden="true"
+                />
+              </button>
+            </div>
 
-          {/* Travel Date */}
-          <div className="lg:col-span-3">
-            <Input
-              id="search-travel-date"
-              label="Travel Date"
-              type="date"
-              min={todayStr}
-              value={date}
-              onChange={(e) => {
-                setDate(e.target.value);
-                if (dateError) setDateError(null);
-              }}
-              error={dateError || undefined}
-              leftIcon={<Calendar size={16} />}
-              helperText={dateError ? undefined : "Scheduled timetable context"}
-            />
+            {/* Destination Station */}
+            <div className="lg:col-span-4">
+              <Input
+                id="search-to-station"
+                label="Destination Station"
+                placeholder="e.g. NDLS"
+                value={to}
+                maxLength={30}
+                onChange={(e) => {
+                  setTo(e.target.value.toUpperCase());
+                  if (toError) setToError(null);
+                  if (generalError) setGeneralError(null);
+                }}
+                error={toError || undefined}
+                helperText="Enter 2–30 character station code"
+                leftIcon={<MapPin size={16} />}
+                required
+              />
+            </div>
+
+            {/* Travel Date */}
+            <div className="lg:col-span-3">
+              <Input
+                id="search-travel-date"
+                label="Travel Date"
+                type="date"
+                min={todayStr}
+                value={date}
+                onChange={(e) => {
+                  setDate(e.target.value);
+                  if (dateError) setDateError(null);
+                }}
+                error={dateError || undefined}
+                leftIcon={<Calendar size={16} />}
+                helperText={dateError ? undefined : "Scheduled timetable context"}
+              />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+            {/* Train Number or Name Query */}
+            <div className="lg:col-span-8">
+              <Input
+                id="search-train-query"
+                label="Train Number or Name"
+                placeholder="e.g. 12301 or Rajdhani or Kamayani"
+                value={query}
+                maxLength={60}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  if (queryError) setQueryError(null);
+                  if (generalError) setGeneralError(null);
+                }}
+                error={queryError || undefined}
+                helperText="Search all 4,514 trains by number (e.g. 12301, 11062) or name"
+                leftIcon={<Search size={16} />}
+                required
+              />
+            </div>
+
+            {/* Travel Date */}
+            <div className="lg:col-span-4">
+              <Input
+                id="search-travel-date"
+                label="Travel Date"
+                type="date"
+                min={todayStr}
+                value={date}
+                onChange={(e) => {
+                  setDate(e.target.value);
+                  if (dateError) setDateError(null);
+                }}
+                error={dateError || undefined}
+                leftIcon={<Calendar size={16} />}
+                helperText={dateError ? undefined : "Scheduled timetable context"}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Same Station / General Error Alert */}
         {generalError && (

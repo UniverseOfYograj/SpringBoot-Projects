@@ -107,9 +107,15 @@ export default function HomePage() {
             <div className="mt-10 mx-auto max-w-4xl text-left text-ink-primary">
               <TrainSearchForm
                 onSearch={(params) => {
-                  navigate(
-                    `${ROUTES.SEARCH}?from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(params.to)}&date=${encodeURIComponent(params.date)}`,
-                  );
+                  if (params.query) {
+                    navigate(
+                      `${ROUTES.SEARCH}?q=${encodeURIComponent(params.query)}&date=${encodeURIComponent(params.date)}`,
+                    );
+                  } else {
+                    navigate(
+                      `${ROUTES.SEARCH}?from=${encodeURIComponent(params.from || '')}&to=${encodeURIComponent(params.to || '')}&date=${encodeURIComponent(params.date)}`,
+                    );
+                  }
                 }}
               />
             </div>

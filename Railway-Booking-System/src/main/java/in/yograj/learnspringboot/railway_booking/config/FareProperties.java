@@ -125,6 +125,15 @@ public class FareProperties {
                 new BigDecimal("5.00")
         ));
 
+        // Executive Chair Car (EC): 5% GST
+        classes.put("EC", new ClassFarePolicy(
+                new BigDecimal("2.10"),
+                new BigDecimal("900.00"),
+                new BigDecimal("60.00"),
+                new BigDecimal("45.00"),
+                new BigDecimal("5.00")
+        ));
+
         // Second Sitting (2S): 0% GST
         classes.put("2S", new ClassFarePolicy(
                 new BigDecimal("0.25"),

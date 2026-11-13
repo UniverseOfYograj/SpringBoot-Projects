@@ -39,8 +39,9 @@ export function TrainCard({
     onModalClose?.();
   };
 
-  // If isTimetableOnly is explicitly passed or journey is explicitly null, treat as timetable-only.
-  const isServiceTimetableOnly = isTimetableOnly ?? (journey === null);
+  // If isTimetableOnly is explicitly passed, treat as timetable-only.
+  // Otherwise, all indexed direct trains support on-demand reservation.
+  const isServiceTimetableOnly = isTimetableOnly ?? false;
 
   const departureTime = train.fromDepartureTime ?? train.fromArrivalTime;
   const arrivalTime = train.toArrivalTime ?? train.toDepartureTime;
@@ -189,7 +190,7 @@ export function TrainCard({
               </span>
             )}
             <span className="hidden sm:inline text-surface-subtle">•</span>
-            <span>Verified Scheduled Timetable</span>
+            <span>Scheduled Timetable · Railora Demo Engine</span>
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">

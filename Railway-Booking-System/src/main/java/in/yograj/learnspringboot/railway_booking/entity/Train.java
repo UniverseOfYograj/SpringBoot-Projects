@@ -21,6 +21,12 @@ public class Train {
     @Column(name = "status", nullable = false, length = 30)
     private String status = "ACTIVE";
 
+    @Column(name = "operating_days", length = 60)
+    private String operatingDays = "DAILY";
+
+    @Column(name = "class_profile", length = 30)
+    private String classProfile = "EXPRESS";
+
     public Train() {
     }
 
@@ -54,5 +60,47 @@ public class Train {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getOperatingDays() {
+        return operatingDays;
+    }
+
+    public void setOperatingDays(String operatingDays) {
+        this.operatingDays = operatingDays;
+    }
+
+    public String getClassProfile() {
+        return classProfile;
+    }
+
+    public void setClassProfile(String classProfile) {
+        this.classProfile = classProfile;
+    }
+
+    public boolean operatesOn(java.time.DayOfWeek dayOfWeek) {
+        if (dayOfWeek == null) {
+            return false;
+        }
+        if (this.operatingDays == null || this.operatingDays.isBlank()
+                || "DAILY".equalsIgnoreCase(this.operatingDays.trim())) {
+            return true;
+        }
+        String daysUpper = this.operatingDays.toUpperCase();
+        String fullDay = dayOfWeek.name();
+        String abbrev = fullDay.substring(0, 3);
+        String isoNum = String.valueOf(dayOfWeek.getValue());
+
+        String[] tokens = daysUpper.split("[,\\s/|]+");
+        for (String token : tokens) {
+            String trimmed = token.trim();
+            if (trimmed.equalsIgnoreCase("DAILY")
+                    || trimmed.equalsIgnoreCase(fullDay)
+                    || trimmed.equalsIgnoreCase(abbrev)
+                    || trimmed.equals(isoNum)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

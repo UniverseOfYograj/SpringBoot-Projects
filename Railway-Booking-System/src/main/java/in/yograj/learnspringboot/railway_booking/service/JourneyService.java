@@ -22,4 +22,6 @@ public interface JourneyService {
     List<JourneyResponseDTO> getAllJourneys();
 
     List<JourneyResponseDTO> getAllJourneys(Long trainId, LocalDate date);
+
+    in.yograj.learnspringboot.railway_booking.entity.Journey getOrCreateOperationalJourney(Long trainId, LocalDate date);
 }

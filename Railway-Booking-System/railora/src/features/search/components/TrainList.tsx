@@ -17,6 +17,7 @@ export interface TrainListProps {
   hasSearched: boolean;
   fromCode?: string;
   toCode?: string;
+  searchQuery?: string;
   travelDate?: string;
   journeys?: JourneyDTO[];
   onSwapAndSearch?: () => void;
@@ -35,6 +36,7 @@ export function TrainList({
   hasSearched,
   fromCode = '',
   toCode = '',
+  searchQuery = '',
   travelDate,
   journeys,
   onSwapAndSearch,
@@ -42,13 +44,12 @@ export function TrainList({
   autoOpenTrain,
   onSelectDate,
 }: TrainListProps) {
-  const { journeys: fetchedJourneys, hasLoaded: hasJourneysLoaded, findJourney } = useOperationalJourneys(
+  const { journeys: fetchedJourneys, findJourney } = useOperationalJourneys(
     travelDate,
     { enabled: !journeys && Boolean(travelDate) },
   );
 
   const activeJourneys = journeys ?? fetchedJourneys;
-  const isJourneysResolved = journeys != null || hasJourneysLoaded;
   // ── 1. Initial / Guidance State (Before search is triggered) ──
   if (!hasSearched) {
     return (
@@ -194,9 +195,18 @@ export function TrainList({
           No direct trains found
         </h3>
         <p className="mx-auto mt-2 max-w-md text-sm text-ink-muted leading-relaxed">
-          There are no scheduled direct routes from{' '}
-          <span className="font-mono font-bold text-ink-primary">{fromCode}</span> to{' '}
-          <span className="font-mono font-bold text-ink-primary">{toCode}</span> in the current timetable database.
+          {searchQuery && (!fromCode || !toCode) ? (
+            <>
+              There are no scheduled direct trains matching{' '}
+              <span className="font-mono font-bold text-ink-primary">"{searchQuery}"</span> in the current timetable database.
+            </>
+          ) : (
+            <>
+              There are no scheduled direct routes from{' '}
+              <span className="font-mono font-bold text-ink-primary">{fromCode}</span> to{' '}
+              <span className="font-mono font-bold text-ink-primary">{toCode}</span> in the current timetable database.
+            </>
+          )}
         </p>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
@@ -226,11 +236,23 @@ export function TrainList({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-1">
         <p
           className="text-sm font-semibold text-ink-primary"
-          aria-label={`Found ${trains.length} direct trains from ${fromCode} to ${toCode}`}
+          aria-label={
+            searchQuery && (!fromCode || !toCode)
+              ? `Found ${trains.length} direct trains matching "${searchQuery}"`
+              : `Found ${trains.length} direct trains from ${fromCode} to ${toCode}`
+          }
         >
-          Found <span className="text-teal-600 font-bold">{trains.length}</span> direct {trains.length === 1 ? 'train' : 'trains'} from{' '}
-          <span className="font-mono text-navy-700 font-bold">{fromCode}</span> to{' '}
-          <span className="font-mono text-navy-700 font-bold">{toCode}</span>
+          Found <span className="text-teal-600 font-bold">{trains.length}</span> direct {trains.length === 1 ? 'train' : 'trains'}{' '}
+          {searchQuery && (!fromCode || !toCode) ? (
+            <>
+              matching <span className="font-mono text-navy-700 font-bold">"{searchQuery}"</span>
+            </>
+          ) : (
+            <>
+              from <span className="font-mono text-navy-700 font-bold">{fromCode}</span> to{' '}
+              <span className="font-mono text-navy-700 font-bold">{toCode}</span>
+            </>
+          )}
         </p>
 
         <div className="flex items-center gap-2">
@@ -241,26 +263,23 @@ export function TrainList({
             </span>
           )}
           <p className="text-xs text-ink-muted">
-            Showing official scheduled timetables
+            Imported Timetable Dataset · Railora Engine
           </p>
         </div>
       </div>
 
       {/* Route-level Demo Inventory Status Banner */}
-      <div className="rounded-xl border border-surface-border bg-surface-card p-3.5 text-xs text-ink-secondary flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
-        <div className="flex items-center gap-2">
-          <Train size={15} className="text-teal-600 shrink-0" aria-hidden="true" />
-          <span>
-            {activeJourneys.some((j) => trains.some((t) => t.trainId === j.trainId || t.trainNumber === j.trainNumber)) ? (
-              <span className="text-teal-800 font-semibold">
-                Demo booking inventory is active for services on this route. Look for the "Demo Booking Ready" badge.
-              </span>
-            ) : (
-              <span>
-                Timetable view (4,514 trains). Transactional demo booking inventory is currently seeded for Train 12301 on 1 December 2026.
-              </span>
-            )}
-          </span>
+      <div className="rounded-xl border border-surface-border bg-surface-card p-3.5 text-xs text-ink-secondary flex flex-col md:flex-row md:items-center md:justify-between gap-3 shadow-2xs">
+        <div className="flex items-start gap-2.5">
+          <Train size={16} className="text-teal-600 shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="space-y-0.5">
+            <p className="text-ink-primary font-semibold">
+              Railora Reservation Engine · Simulated Demo Inventory
+            </p>
+            <p className="text-2xs text-ink-muted leading-relaxed">
+              Timetable records originate from the imported station schedule dataset; operating-day fallback and berth inventories are simulated for demonstration. Not an official IRCTC availability confirmation.
+            </p>
+          </div>
         </div>
 
         {travelDate !== '2026-12-01' && onSelectDate && (
@@ -269,7 +288,7 @@ export function TrainList({
             variant="secondary"
             size="sm"
             onClick={() => onSelectDate('2026-12-01')}
-            className="shrink-0 text-xs text-teal-700 hover:text-teal-800 font-semibold border-teal-300 bg-teal-50 hover:bg-teal-100"
+            className="shrink-0 text-xs text-teal-700 hover:text-teal-800 font-medium border-teal-300 bg-teal-50 hover:bg-teal-100"
           >
             Switch to 1 Dec 2026 (Demo Run)
           </Button>
@@ -283,12 +302,12 @@ export function TrainList({
             (j) => j.trainId === train.trainId || (j.trainNumber && j.trainNumber.trim() === train.trainNumber.trim()),
           ) || findJourney(train.trainId, train.trainNumber);
 
-          const isTimetableOnly = isJourneysResolved && !matchedJourney;
+          // All indexed trains support date-wise on-demand operational booking.
+          const isTimetableOnly = false;
           const shouldAutoOpen = Boolean(
             autoOpenTrain &&
               (train.trainNumber.trim() === autoOpenTrain.trim() ||
-                train.trainId.toString() === autoOpenTrain.trim()) &&
-              !isTimetableOnly,
+                train.trainId.toString() === autoOpenTrain.trim()),
           );
 
           return (

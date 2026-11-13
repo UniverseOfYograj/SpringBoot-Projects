@@ -5,12 +5,15 @@ import in.yograj.learnspringboot.railway_booking.dto.JourneyRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.JourneyResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.JourneyStopResponseDTO;
 import in.yograj.learnspringboot.railway_booking.dto.SearchJourneyRequestDTO;
+import in.yograj.learnspringboot.railway_booking.dto.TrainSearchResponseDTO;
 import in.yograj.learnspringboot.railway_booking.entity.*;
 import in.yograj.learnspringboot.railway_booking.exception.BadRequestException;
 import in.yograj.learnspringboot.railway_booking.exception.ResourceNotFoundException;
 import in.yograj.learnspringboot.railway_booking.repository.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +36,30 @@ public class JourneyServiceImpl implements JourneyService {
     private final TrainRouteRepository trainRouteRepository;
     private final TrainStopRepository trainStopRepository;
     private final JourneyStopRepository journeyStopRepository;
+    private final OperationalJourneyCreator operationalJourneyCreator;
+
+    @Autowired
+    public JourneyServiceImpl(JourneyRepository journeyRepository,
+                              TrainRepository trainRepository,
+                              StationRepository stationRepository,
+                              CoachRepository coachRepository,
+                              SeatRepository seatRepository,
+                              JourneySeatInventoryRepository inventoryRepository,
+                              TrainRouteRepository trainRouteRepository,
+                              TrainStopRepository trainStopRepository,
+                              JourneyStopRepository journeyStopRepository,
+                              OperationalJourneyCreator operationalJourneyCreator) {
+        this.journeyRepository = journeyRepository;
+        this.trainRepository = trainRepository;
+        this.stationRepository = stationRepository;
+        this.coachRepository = coachRepository;
+        this.seatRepository = seatRepository;
+        this.inventoryRepository = inventoryRepository;
+        this.trainRouteRepository = trainRouteRepository;
+        this.trainStopRepository = trainStopRepository;
+        this.journeyStopRepository = journeyStopRepository;
+        this.operationalJourneyCreator = operationalJourneyCreator;
+    }
 
     public JourneyServiceImpl(JourneyRepository journeyRepository,
                               TrainRepository trainRepository,
@@ -43,15 +70,10 @@ public class JourneyServiceImpl implements JourneyService {
                               TrainRouteRepository trainRouteRepository,
                               TrainStopRepository trainStopRepository,
                               JourneyStopRepository journeyStopRepository) {
-        this.journeyRepository = journeyRepository;
-        this.trainRepository = trainRepository;
-        this.stationRepository = stationRepository;
-        this.coachRepository = coachRepository;
-        this.seatRepository = seatRepository;
-        this.inventoryRepository = inventoryRepository;
-        this.trainRouteRepository = trainRouteRepository;
-        this.trainStopRepository = trainStopRepository;
-        this.journeyStopRepository = journeyStopRepository;
+        this(journeyRepository, trainRepository, stationRepository,
+             coachRepository, seatRepository, inventoryRepository,
+             trainRouteRepository, trainStopRepository, journeyStopRepository,
+             new OperationalJourneyCreator(journeyRepository, journeyStopRepository, coachRepository, seatRepository, inventoryRepository));
     }
 
     @Override
@@ -120,7 +142,7 @@ public class JourneyServiceImpl implements JourneyService {
             stop.setJourney(saved);
         }
         journeyStopRepository.saveAll(datedStops);
-        seedSeatInventoryForJourney(saved);
+        operationalJourneyCreator.seedMultiClassInventory(saved);
         return mapToResponse(saved, null, null);
     }
 
@@ -151,12 +173,7 @@ public class JourneyServiceImpl implements JourneyService {
     }
 
     @Override
-    @Transactional(readOnly = true)
-    @Cacheable(
-            value = RedisCacheConfig.JOURNEY_SEARCH_CACHE,
-            key = "T(String).valueOf(#request.fromStationId()) + '_' + T(String).valueOf(#request.toStationId()) + '_' + T(String).valueOf(#request.journeyDate())",
-            unless = "#result == null"
-    )
+    @Transactional
     public List<JourneyResponseDTO> searchJourneys(SearchJourneyRequestDTO request) {
         if (request == null) {
             throw new BadRequestException("Journey search request is required");
@@ -165,12 +182,7 @@ public class JourneyServiceImpl implements JourneyService {
     }
 
     @Override
-    @Transactional(readOnly = true)
-    @Cacheable(
-            value = RedisCacheConfig.JOURNEY_SEARCH_CACHE,
-            key = "T(String).valueOf(#fromStationId) + '_' + T(String).valueOf(#toStationId) + '_' + T(String).valueOf(#journeyDate)",
-            unless = "#result == null"
-    )
+    @Transactional
     public List<JourneyResponseDTO> searchJourneys(Long fromStationId, Long toStationId, LocalDate journeyDate) {
         if (fromStationId == null || toStationId == null || journeyDate == null) {
             throw new BadRequestException("fromStationId, toStationId and journeyDate are required for search");
@@ -206,18 +218,54 @@ public class JourneyServiceImpl implements JourneyService {
                 results.add(mapToResponse(journey, null, null));
             }
         }
+        if (!results.isEmpty()) {
+            return results;
+        }
+
+        // Lazy generation for connecting trains if not yet created for this journeyDate
+        Station fromStation = stationRepository.findById(fromStationId).orElse(null);
+        Station toStation = stationRepository.findById(toStationId).orElse(null);
+        if (fromStation != null && toStation != null) {
+            List<TrainSearchResponseDTO> connectingTrains = trainStopRepository
+                    .findTrainStopsBetweenStations(fromStation.getStationCode(), toStation.getStationCode());
+            for (TrainSearchResponseDTO trainDto : connectingTrains) {
+            try {
+                Journey journey = getOrCreateOperationalJourney(trainDto.trainId(), journeyDate);
+                List<JourneyStop> stops = journeyStopRepository
+                        .findByJourney_JourneyIdOrderByStopSequence(journey.getJourneyId());
+                Optional<JourneyStop> origin = stops.stream()
+                        .filter(stop -> stop.getStation().getStationId().equals(fromStationId))
+                        .findFirst();
+                Optional<JourneyStop> destination = stops.stream()
+                        .filter(stop -> stop.getStation().getStationId().equals(toStationId))
+                        .filter(stop -> origin.isPresent()
+                                && stop.getStopSequence() > origin.get().getStopSequence())
+                        .findFirst();
+                if (origin.isPresent() && destination.isPresent()) {
+                    results.add(mapToResponse(journey, origin.get(), destination.get()));
+                }
+            } catch (Exception ignored) {
+                // Ignore non-running or invalid date trains
+            }
+            }
+        }
         return results;
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<JourneyResponseDTO> getAllJourneys() {
         return getAllJourneys(null, null);
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<JourneyResponseDTO> getAllJourneys(Long trainId, LocalDate date) {
+        if (trainId != null && date != null) {
+            Journey journey = getOrCreateOperationalJourney(trainId, date);
+            return List.of(mapToResponse(journey, null, null));
+        }
+
         List<Journey> journeys;
         if (date != null) {
             journeys = journeyRepository.findByJourneyDate(date);
@@ -228,6 +276,78 @@ public class JourneyServiceImpl implements JourneyService {
                 .filter(j -> trainId == null || (j.getTrain() != null && j.getTrain().getTrainId().equals(trainId)))
                 .map(journey -> mapToResponse(journey, null, null))
                 .toList();
+    }
+
+    @Override
+    public Journey getOrCreateOperationalJourney(Long trainId, LocalDate date) {
+        if (trainId == null || date == null) {
+            throw new BadRequestException("Train ID and travel date are required");
+        }
+
+        // 1. Fast existence check
+        Optional<Journey> existing = journeyRepository.findByTrain_TrainIdAndJourneyDate(trainId, date);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        // 2. Validate train
+        Train train = trainRepository.findById(trainId)
+                .orElseThrow(() -> new ResourceNotFoundException("Train not found with id: " + trainId));
+
+        // 3. Validate operating days
+        if (!train.operatesOn(date.getDayOfWeek())) {
+            throw new BadRequestException("Train " + train.getTrainNumber() + " (" + train.getTrainName()
+                    + ") is not scheduled to operate on " + date.getDayOfWeek() + " (" + date + ")");
+        }
+
+        // 4. Validate booking horizon (up to 120 days in advance)
+        LocalDate today = LocalDate.now();
+        if (date.isBefore(today.minusDays(1))) {
+            throw new BadRequestException("Cannot book journey in the past: " + date);
+        }
+        if (date.isAfter(today.plusDays(120))) {
+            throw new BadRequestException("Journey date " + date + " is beyond the 120-day booking horizon");
+        }
+
+        // 5. Retrieve primary route and route stops
+        List<TrainRoute> routes = trainRouteRepository.findByTrain_TrainIdOrderByRouteName(train.getTrainId());
+        if (routes.isEmpty()) {
+            throw new BadRequestException("No route found for train: " + train.getTrainNumber());
+        }
+        TrainRoute route = routes.get(0);
+        List<TrainStop> routeStops = trainStopRepository.findByTrainRoute_TrainRouteIdOrderByStopSequence(route.getTrainRouteId());
+        if (routeStops.size() < 2) {
+            throw new BadRequestException("Train route requires at least 2 stops for train: " + train.getTrainNumber());
+        }
+
+        // 6. Concurrency-safe creation attempt with REQUIRES_NEW transaction rollback isolation
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            existing = journeyRepository.findByTrain_TrainIdAndJourneyDate(trainId, date);
+            if (existing.isPresent()) {
+                return existing.get();
+            }
+            try {
+                return operationalJourneyCreator.createOperationalJourneyInNewTransaction(train, route, routeStops, date);
+            } catch (DataIntegrityViolationException ex) {
+                // The failed REQUIRES_NEW transaction was rolled back cleanly.
+                // Winning transaction is either committed or completing. Poll for it.
+                for (int poll = 0; poll < 10; poll++) {
+                    existing = journeyRepository.findByTrain_TrainIdAndJourneyDate(trainId, date);
+                    if (existing.isPresent()) {
+                        return existing.get();
+                    }
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Interrupted while waiting for concurrent journey creation", ie);
+                    }
+                }
+            }
+        }
+
+        return journeyRepository.findByTrain_TrainIdAndJourneyDate(trainId, date)
+                .orElseThrow(() -> new IllegalStateException("Could not create or locate operational journey for train " + trainId + " on " + date));
     }
 
     private List<JourneyStop> buildJourneyStops(Journey journey, List<TrainStop> routeStops) {
@@ -242,13 +362,13 @@ public class JourneyServiceImpl implements JourneyService {
                     : LocalDateTime.of(stopDate, trainStop.getArrivalTime()));
             stop.setDepartureAt(trainStop.getDepartureTime() == null ? null
                     : LocalDateTime.of(stopDate, trainStop.getDepartureTime()));
+            stop.setDistanceFromOriginKm(trainStop.getDistanceFromOriginKm());
             return stop;
         }).toList();
     }
 
     private List<JourneyStop> buildLegacyJourneyStops(Journey journey, Station from, Station to,
                                                        LocalTime departure, LocalTime arrival) {
-        // Legacy create API ko preserve karte hue, arrival ka date departure se pehle ho to agle din ka run maana hai.
         LocalDateTime departureAt = LocalDateTime.of(journey.getJourneyDate(), departure);
         LocalDate arrivalDate = arrival.isBefore(departure)
                 ? journey.getJourneyDate().plusDays(1) : journey.getJourneyDate();
@@ -279,46 +399,6 @@ public class JourneyServiceImpl implements JourneyService {
         }
         if (request.fromStationId().equals(request.toStationId())) {
             throw new BadRequestException("Source and destination station cannot be the same");
-        }
-    }
-
-    private void seedSeatInventoryForJourney(Journey journey) {
-        Train train = journey.getTrain();
-        List<Coach> coaches = coachRepository.findByTrain_TrainId(train.getTrainId());
-        if (coaches.isEmpty()) {
-            Coach coach = new Coach();
-            coach.setTrain(train);
-            coach.setCoachNumber("B1");
-            coach.setCoachType("SECOND_SEATING");
-            coach.setSeatCapacity(4);
-            coach.setStatus("ACTIVE");
-            coaches = List.of(coachRepository.save(coach));
-        }
-
-        for (Coach coach : coaches) {
-            List<Seat> seats = seatRepository.findByCoach_CoachId(coach.getCoachId());
-            if (seats.isEmpty()) {
-                for (int seatNumber = 1; seatNumber <= coach.getSeatCapacity(); seatNumber++) {
-                    Seat seat = new Seat();
-                    seat.setCoach(coach);
-                    seat.setSeatNumber(seatNumber);
-                    seat.setSeatType(coach.getCoachType());
-                    seat.setStatus("AVAILABLE");
-                    seats.add(seatRepository.save(seat));
-                }
-            }
-            for (Seat seat : seats) {
-                if (!inventoryRepository.existsByJourney_JourneyIdAndSeat_SeatId(
-                        journey.getJourneyId(), seat.getSeatId())) {
-                    JourneySeatInventory inventory = new JourneySeatInventory();
-                    inventory.setJourney(journey);
-                    inventory.setCoach(coach);
-                    inventory.setSeat(seat);
-                    inventory.setStatus("AVAILABLE");
-                    inventory.setUpdatedAt(LocalDateTime.now());
-                    inventoryRepository.save(inventory);
-                }
-            }
         }
     }
 

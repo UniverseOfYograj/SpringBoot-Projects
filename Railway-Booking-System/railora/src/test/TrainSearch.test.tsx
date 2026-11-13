@@ -259,6 +259,47 @@ describe('TrainSearchForm Component', () => {
     expect(handleSearch).not.toHaveBeenCalled();
     expect(screen.getByText(/Travel date cannot be in the past/i)).toBeInTheDocument();
   });
+
+  it('switches to direct train query mode and submits search by train number or name', async () => {
+    const user = userEvent.setup();
+    const handleSearch = vi.fn();
+    render(<TrainSearchForm onSearch={handleSearch} />);
+
+    // Click "Train Number or Name" tab
+    const queryModeBtn = screen.getByRole('button', { name: /Train Number or Name/i });
+    await user.click(queryModeBtn);
+
+    // Enter train query
+    const queryInput = screen.getByLabelText(/Train Number or Name/i);
+    await user.type(queryInput, '12301');
+
+    const submitBtn = screen.getByRole('button', { name: /Search Trains/i });
+    await user.click(submitBtn);
+
+    expect(handleSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: '12301',
+      })
+    );
+  });
+
+  it('validates minimum 2 characters when submitting direct train query', async () => {
+    const user = userEvent.setup();
+    const handleSearch = vi.fn();
+    render(<TrainSearchForm onSearch={handleSearch} />);
+
+    // Switch to query mode
+    await user.click(screen.getByRole('button', { name: /Train Number or Name/i }));
+
+    const queryInput = screen.getByLabelText(/Train Number or Name/i);
+    await user.type(queryInput, '1');
+
+    const submitBtn = screen.getByRole('button', { name: /Search Trains/i });
+    await user.click(submitBtn);
+
+    expect(handleSearch).not.toHaveBeenCalled();
+    expect(screen.getByText(/Please enter at least 2 characters/i)).toBeInTheDocument();
+  });
 });
 
 describe('TrainCard Component', () => {

@@ -12,23 +12,29 @@ export default function TrainSearchPage() {
   const fromParam = (searchParams.get('from') || '').trim().toUpperCase();
   const toParam = (searchParams.get('to') || '').trim().toUpperCase();
   const dateParam = (searchParams.get('date') || '').trim();
+  const queryParam = (searchParams.get('q') || searchParams.get('query') || '').trim();
   const autoOpenTrain = (searchParams.get('autoOpenTrain') || '').trim();
 
-  const hasQueryParams = Boolean(fromParam && toParam);
+  const isQueryMode = Boolean(!fromParam && !toParam && queryParam);
+  const hasQueryParams = isQueryMode ? Boolean(queryParam) : Boolean(fromParam && toParam);
 
   const fromError = fromParam ? validateStationCode(fromParam) : null;
   const toError = toParam ? validateStationCode(toParam) : null;
   const isSameStation = Boolean(fromParam && toParam && fromParam === toParam);
 
-  const validationError = hasQueryParams
-    ? isSameStation
-      ? 'Origin and destination stations cannot be the same.'
-      : fromError
-        ? `Invalid origin station code: ${fromError}`
-        : toError
-          ? `Invalid destination station code: ${toError}`
-          : null
-    : null;
+  const validationError = isQueryMode
+    ? queryParam.length < 2
+      ? 'Search query must be at least 2 characters.'
+      : null
+    : hasQueryParams
+      ? isSameStation
+        ? 'Origin and destination stations cannot be the same.'
+        : fromError
+          ? `Invalid origin station code: ${fromError}`
+          : toError
+            ? `Invalid destination station code: ${toError}`
+            : null
+      : null;
 
   const isSearchValid = hasQueryParams && !validationError;
 
@@ -39,15 +45,18 @@ export default function TrainSearchPage() {
     isError,
     error,
     refetch,
-  } = useTrainSearch(fromParam, toParam, {
+  } = useTrainSearch(fromParam, toParam, queryParam, {
     enabled: isSearchValid,
   });
 
-  const handleSearch = (params: { from: string; to: string; date: string; autoOpenTrain?: string }) => {
-    const nextParams: Record<string, string> = {
-      from: params.from.trim().toUpperCase(),
-      to: params.to.trim().toUpperCase(),
-    };
+  const handleSearch = (params: { from?: string; to?: string; query?: string; date: string; autoOpenTrain?: string }) => {
+    const nextParams: Record<string, string> = {};
+    if (params.query) {
+      nextParams.q = params.query.trim();
+    } else {
+      if (params.from) nextParams.from = params.from.trim().toUpperCase();
+      if (params.to) nextParams.to = params.to.trim().toUpperCase();
+    }
     if (params.date) {
       nextParams.date = params.date;
     }
@@ -119,6 +128,7 @@ export default function TrainSearchPage() {
           <TrainSearchForm
             initialFrom={fromParam}
             initialTo={toParam}
+            initialQuery={queryParam}
             initialDate={dateParam}
             isLoading={isLoading || isFetching}
             onSearch={handleSearch}
@@ -143,6 +153,7 @@ export default function TrainSearchPage() {
             validationError={validationError}
             fromCode={fromParam}
             toCode={toParam}
+            searchQuery={queryParam}
             travelDate={dateParam}
             onSwapAndSearch={handleSwapAndSearch}
             autoOpenTrain={autoOpenTrain}
@@ -150,6 +161,7 @@ export default function TrainSearchPage() {
               handleSearch({
                 from: fromParam || 'HWH',
                 to: toParam || 'NDLS',
+                query: queryParam,
                 date: newDate,
                 autoOpenTrain: autoOpenTrain || '12301',
               });

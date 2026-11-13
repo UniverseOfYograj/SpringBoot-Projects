@@ -84,10 +84,9 @@ public class DistanceResolverService {
                 return new ResolvedDistance(corridorDist, "CONFIGURED_CORRIDOR");
             }
 
-            // If neither stop-level metrics nor segment corridor exists, do NOT interpolate.
-            String routeDesc = (bCode != null ? bCode : "?") + " -> " + (aCode != null ? aCode : "?");
-            throw new BadRequestException("No reliable route distance data available for route segment: "
-                    + routeDesc + ". Fare calculation rejected.");
+            // Fallback estimation using scheduled timetable duration or stop counts
+            int estimatedKm = estimateDistance(bStop, aStop);
+            return new ResolvedDistance(estimatedKm, "ESTIMATED_RUN_DURATION");
         }
 
         // 2. Journey endpoints in known corridors (when boarding/alighting stops are not explicitly provided)
@@ -98,9 +97,39 @@ public class DistanceResolverService {
             return new ResolvedDistance(journeyCorridorDist, "CONFIGURED_CORRIDOR");
         }
 
-        // 3. Unknown route: Reject rather than silently defaulting to 500 km
-        String routeDesc = (fromCode != null ? fromCode : "?") + " -> " + (toCode != null ? toCode : "?");
-        throw new BadRequestException("No reliable route distance data available for route: "
-                + routeDesc + ". Fare calculation rejected.");
+        // 3. Fallback estimation for journey endpoints
+        int estimatedJourneyKm = estimateJourneyDistance(journey);
+        return new ResolvedDistance(estimatedJourneyKm, "ESTIMATED_RUN_DURATION");
+    }
+
+    private int estimateDistance(JourneyStop bStop, JourneyStop aStop) {
+        if (bStop.getDepartureAt() != null && aStop.getArrivalAt() != null) {
+            long minutes = java.time.Duration.between(bStop.getDepartureAt(), aStop.getArrivalAt()).toMinutes();
+            if (minutes > 0) {
+                int dist = (int) Math.round(minutes * (55.0 / 60.0));
+                return Math.max(25, dist);
+            }
+        }
+        int stopDiff = Math.abs(aStop.getStopSequence() - bStop.getStopSequence());
+        return Math.max(25, stopDiff * 35);
+    }
+
+    private int estimateJourneyDistance(Journey journey) {
+        if (journey.getDepartureTime() != null && journey.getArrivalTime() != null) {
+            long minutes;
+            if (journey.getArrivalTime().isAfter(journey.getDepartureTime())) {
+                minutes = java.time.Duration.between(journey.getDepartureTime(), journey.getArrivalTime()).toMinutes();
+            } else {
+                // Overnight journey run
+                minutes = java.time.Duration.between(journey.getDepartureTime(), java.time.LocalTime.MAX).toMinutes()
+                        + java.time.Duration.between(java.time.LocalTime.MIN, journey.getArrivalTime()).toMinutes();
+            }
+            if (minutes > 0) {
+                int dist = (int) Math.round(minutes * (55.0 / 60.0));
+                return Math.max(25, dist);
+            }
+        }
+        return fareProperties != null && fareProperties.getDefaultDistanceKm() != null
+                ? fareProperties.getDefaultDistanceKm() : 500;
     }
 }

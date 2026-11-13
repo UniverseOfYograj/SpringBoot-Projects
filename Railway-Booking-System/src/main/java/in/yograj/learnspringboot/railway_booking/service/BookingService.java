@@ -859,16 +859,17 @@ public class BookingService {
             throw new BadRequestException("PNR must be exactly 10 numeric digits");
         }
 
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found"));
-
         Booking booking = bookingRepository.findByPnr(trimmedPnr)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found for PNR: " + trimmedPnr));
 
-        if (!isAdmin(user) && !booking.getUser().getUserId().equals(user.getUserId())) {
-            throw new ResourceNotFoundException("Booking not found for PNR: " + trimmedPnr);
+        if (username != null && !username.isBlank()) {
+            User user = userRepository.findByUsername(username).orElse(null);
+            if (user != null && (isAdmin(user) || booking.getUser().getUserId().equals(user.getUserId()))) {
+                return toDetailResponse(booking);
+            }
         }
 
+        // Public PNR enquiry support
         return toDetailResponse(booking);
     }
 

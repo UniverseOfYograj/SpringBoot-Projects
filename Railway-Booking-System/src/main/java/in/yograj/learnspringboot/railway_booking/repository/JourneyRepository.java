@@ -11,6 +11,10 @@ public interface JourneyRepository extends JpaRepository<Journey, Long> {
 
     List<Journey> findByJourneyDate(LocalDate journeyDate);
 
+    java.util.Optional<Journey> findByTrain_TrainIdAndJourneyDate(Long trainId, LocalDate journeyDate);
+
+    boolean existsByTrain_TrainIdAndJourneyDate(Long trainId, LocalDate journeyDate);
+
     boolean existsByTrain_TrainIdAndFromStation_StationIdAndToStation_StationIdAndJourneyDate(
             Long trainId,
             Long fromStationId,

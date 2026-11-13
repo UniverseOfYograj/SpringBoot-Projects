@@ -18,8 +18,12 @@ export interface UseTrainSearchOptions {
 export function useTrainSearch(
   fromCode: string,
   toCode: string,
-  options: UseTrainSearchOptions = {},
+  queryOrOptions?: string | UseTrainSearchOptions,
+  maybeOptions?: UseTrainSearchOptions,
 ) {
+  const queryStr = typeof queryOrOptions === 'string' ? queryOrOptions.trim() : '';
+  const options = (typeof queryOrOptions === 'object' && queryOrOptions !== null ? queryOrOptions : maybeOptions) || {};
+
   const normalizedFrom = fromCode.trim().toUpperCase();
   const normalizedTo = toCode.trim().toUpperCase();
 
@@ -27,12 +31,20 @@ export function useTrainSearch(
   const isToValid = validateStationCode(normalizedTo) === null;
   const isDifferent = normalizedFrom !== normalizedTo;
 
-  const canExecute = isFromValid && isToValid && isDifferent;
+  const isStationSearch = isFromValid && isToValid && isDifferent;
+  const isQuerySearch = Boolean(queryStr && queryStr.length >= 2);
+
+  const canExecute = isStationSearch || isQuerySearch;
   const isExplicitlyEnabled = options.enabled ?? true;
 
   return useQuery<TrainSearchResponseDTO[], Error>({
-    queryKey: ['trains', 'search', normalizedFrom, normalizedTo],
-    queryFn: ({ signal }) => searchTrains(normalizedFrom, normalizedTo, signal),
+    queryKey: ['trains', 'search', normalizedFrom, normalizedTo, queryStr],
+    queryFn: ({ signal }) => {
+      if (isStationSearch) {
+        return searchTrains(normalizedFrom, normalizedTo, signal);
+      }
+      return searchTrains({ q: queryStr }, signal);
+    },
     enabled: isExplicitlyEnabled && canExecute,
     staleTime: 5 * 60 * 1000, // Timetable data is stable for 5 minutes
     retry: (failureCount, error: unknown) => {

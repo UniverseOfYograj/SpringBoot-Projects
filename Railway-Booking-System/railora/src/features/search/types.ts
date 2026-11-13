@@ -21,7 +21,18 @@ export interface TrainSearchResponseDTO {
 }
 
 export interface TrainSearchParams {
-  from: string;
-  to: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  query?: string;
   date?: string;
+}
+
+export interface SearchTrainsOptions {
+  from?: string;
+  to?: string;
+  q?: string;
+  query?: string;
+  page?: number;
+  size?: number;
 }
