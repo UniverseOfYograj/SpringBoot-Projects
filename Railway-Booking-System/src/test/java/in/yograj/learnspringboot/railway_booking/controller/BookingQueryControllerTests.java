@@ -272,10 +272,17 @@ class BookingQueryControllerTests {
     }
 
     @Test
-    void getBookingByPnr_unauthenticated_returns401() throws Exception {
+    void getBookingByPnr_unauthenticated_returns200AndDetailResponse() throws Exception {
+        BookingDetailResponseDTO dto = sampleDetail("RB-PNR-001", "passenger1", "1234567890");
+        when(bookingService.getBookingByPnr("1234567890", null)).thenReturn(dto);
+
         mockMvc.perform(get("/api/bookings/pnr/1234567890")
                         .accept(MediaType.APPLICATION_JSON))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pnr").value("1234567890"))
+                .andExpect(jsonPath("$.bookingRef").value("RB-PNR-001"))
+                .andExpect(jsonPath("$.trainNumber").value("12951"))
+                .andExpect(jsonPath("$.bookingStatus").value("CONFIRMED"));
     }
 
     @Test

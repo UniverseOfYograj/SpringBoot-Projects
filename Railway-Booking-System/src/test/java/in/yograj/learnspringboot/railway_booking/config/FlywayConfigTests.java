@@ -46,7 +46,7 @@ class FlywayConfigTests {
     }
 
     @Test
-    void allNineMigrationsDiscoveredInStrictSequentialOrder() {
+    void allTenMigrationsDiscoveredInStrictSequentialOrder() {
         JdbcDataSource ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:flyway_discovery_test;DB_CLOSE_DELAY=-1");
         ds.setUser("sa");
@@ -58,7 +58,7 @@ class FlywayConfigTests {
                 .load();
 
         org.flywaydb.core.api.MigrationInfo[] migrations = flyway.info().all();
-        assertThat(migrations).hasSize(9);
+        assertThat(migrations).hasSize(10);
         assertThat(migrations[0].getVersion().getVersion()).isEqualTo("1");
         assertThat(migrations[1].getVersion().getVersion()).isEqualTo("2");
         assertThat(migrations[2].getVersion().getVersion()).isEqualTo("3");
@@ -70,5 +70,7 @@ class FlywayConfigTests {
         assertThat(migrations[7].getDescription()).isEqualTo("add passengers and multi seat support");
         assertThat(migrations[8].getVersion().getVersion()).isEqualTo("9");
         assertThat(migrations[8].getDescription()).isEqualTo("add booking fare breakdown");
+        assertThat(migrations[9].getVersion().getVersion()).isEqualTo("10");
+        assertThat(migrations[9].getDescription()).isEqualTo("add train operating days and journey constraints");
     }
 }

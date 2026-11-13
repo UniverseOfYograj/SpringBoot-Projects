@@ -426,7 +426,7 @@ public class FareCalculationTests {
     }
 
     @Test
-    void unknownRouteDistance_throwsBadRequestException_andDoesNotFallBackToDefaultDistance() {
+    void unknownRouteDistance_resolvesTimetableEstimatedRunDurationFallback_andRejectsInvalidStopIds() {
         // Create unknown stations not in configured corridors
         Station stA = new Station();
         stA.setStationCode("UNK1");
@@ -467,16 +467,19 @@ public class FareCalculationTests {
         unkStop2.setArrivalAt(LocalDateTime.of(2026, 12, 10, 12, 0));
         unkStop2 = journeyStopRepository.save(unkStop2);
 
-        // Neither stop metrics nor corridor distance exists: Must reject with BadRequestException
+        // Neither stop metrics nor corridor distance exists: resolves via ESTIMATED_RUN_DURATION fallback
         final Long jId = unkJourney.getJourneyId();
         final Long s1Id = unkStop1.getJourneyStopId();
         final Long s2Id = unkStop2.getJourneyStopId();
 
-        BadRequestException ex = assertThrows(BadRequestException.class, () ->
-                fareCalculationService.calculateFareQuote(jId, "SL", 1, s1Id, s2Id));
-        assertTrue(ex.getMessage().contains("No reliable route distance data available"));
+        FareQuoteResponseDTO quote = fareCalculationService.calculateFareQuote(jId, "SL", 1, s1Id, s2Id);
+        assertNotNull(quote);
+        assertEquals(220, quote.distanceKm());
+        assertEquals("ESTIMATED_RUN_DURATION", quote.distanceSource());
+        assertNotNull(quote.bookingTotal());
+        assertTrue(quote.bookingTotal().compareTo(BigDecimal.ZERO) > 0);
 
-        // Travel class availability must report null baseFare instead of 500.00
+        // Travel class availability populates base fare from estimated timetable run duration
         Coach unkCoach = new Coach();
         unkCoach.setTrain(unkTrain);
         unkCoach.setCoachNumber("S1");
@@ -496,7 +499,13 @@ public class FareCalculationTests {
                 jId, s1Id, s2Id);
         assertNotNull(unkClasses);
         assertEquals(1, unkClasses.size());
-        assertNull(unkClasses.get(0).baseFare(), "Unknown route distance must return null baseFare rather than 500.00 fallback");
+        assertNotNull(unkClasses.get(0).baseFare(), "Estimated run duration fallback must calculate baseFare");
+
+        // Retain true negative test: Non-existent stop IDs must throw BadRequestException
+        assertThrows(BadRequestException.class, () ->
+                fareCalculationService.calculateFareQuote(jId, "SL", 1, 999999L, s2Id));
+        assertThrows(BadRequestException.class, () ->
+                fareCalculationService.calculateFareQuote(jId, "SL", 1, s1Id, 999999L));
     }
 
     @Test
@@ -544,7 +553,7 @@ public class FareCalculationTests {
         Coach coach = new Coach();
         coach.setTrain(train);
         coach.setCoachNumber("S1");
-        coach.setCoachType("SL");
+        coach.setCoachType("UNKNOWN_CLASS");
         coach.setSeatCapacity(1);
         coach = coachRepository.save(coach);
 
@@ -560,20 +569,20 @@ public class FareCalculationTests {
         seatInventoryService.holdSeat(
                 journey.getJourneyId(), seat.getSeatId(), 10,
                 stop1.getJourneyStopId(), stop2.getJourneyStopId(),
-                "SL", "S1", testUser.getUsername());
+                "UNKNOWN_CLASS", "S1", testUser.getUsername());
 
         CreateBookingRequestDTO request = new CreateBookingRequestDTO(
                 journey.getJourneyId(), seat.getSeatId(),
                 stop1.getJourneyStopId(), stop2.getJourneyStopId(),
-                "SL", "S1"
+                "UNKNOWN_CLASS", "S1"
         );
 
-        // Attempting to create booking must throw BadRequestException due to missing distance
+        // Attempting to create booking must throw BadRequestException due to fare calculation failure
         BadRequestException ex = assertThrows(BadRequestException.class, () ->
                 bookingService.createBooking(request, testUser.getUsername()));
-        assertTrue(ex.getMessage().contains("No reliable route distance data available"));
+        assertTrue(ex.getMessage().contains("Unsupported travel class: UNKNOWN_CLASS"));
 
-        // Confirm zero bookings were created in the database
+        // Confirm zero bookings were created in the database (atomic rollback verified)
         assertTrue(bookingRepository.findAll().stream()
                 .noneMatch(b -> b.getUser() != null && testUser.getUsername().equals(b.getUser().getUsername())));
     }

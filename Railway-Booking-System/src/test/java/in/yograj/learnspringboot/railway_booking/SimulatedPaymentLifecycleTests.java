@@ -92,6 +92,15 @@ class SimulatedPaymentLifecycleTests {
     private List<JourneyStop> runStops;
     private List<JourneySeatInventory> inventories;
 
+    // Independently derived Indian Railways dynamic fare contract for 200 km in AC 2 Tier (2A):
+    // Base fare: max(200 km * 1.65, min 750.00) = 750.00
+    // Reservation charge: 50.00
+    // Superfast charge: 45.00
+    // Subtotal: 845.00
+    // GST (5% on AC classes): 845.00 * 0.05 = 42.25
+    // Total fare: 887.25
+    private static final BigDecimal EXPECTED_2A_200KM_FARE = new BigDecimal("887.25");
+
     @BeforeAll
     static void verifyDatabaseTarget(@Autowired DataSource dataSource) throws Exception {
         try (Connection conn = dataSource.getConnection()) {
@@ -171,7 +180,7 @@ class SimulatedPaymentLifecycleTests {
         assertEquals(created.bookingRef(), summary.bookingRef());
         assertEquals("PENDING_PAYMENT", summary.bookingStatus());
         assertEquals("PENDING", summary.paymentStatus());
-        assertEquals(new BigDecimal("90.00"), summary.amount());
+        assertEquals(EXPECTED_2A_200KM_FARE, summary.amount());
         assertEquals("SIMULATED", summary.mode());
         assertNotNull(summary.holdExpiresAt());
         assertTrue(summary.holdExpiresAt().isAfter(LocalDateTime.now()));
@@ -194,7 +203,7 @@ class SimulatedPaymentLifecycleTests {
         assertEquals("SUCCESS", response.paymentStatus());
         assertEquals("CONFIRMED", response.bookingStatus());
         assertEquals("SIMULATED", response.paymentMethod());
-        assertEquals(new BigDecimal("90.00"), response.amount());
+        assertEquals(EXPECTED_2A_200KM_FARE, response.amount());
 
         // Verify database state
         Booking updatedBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
@@ -427,7 +436,7 @@ class SimulatedPaymentLifecycleTests {
                 .findFirst()
                 .orElseThrow();
         assertEquals("SIMULATED", refundTxn.getPaymentMethod());
-        assertEquals(new BigDecimal("90.00"), refundTxn.getAmount());
+        assertEquals(EXPECTED_2A_200KM_FARE, refundTxn.getAmount());
 
         // Seat allocation must be released/CANCELLED
         SeatAllocation alloc = allocationRepository.findById(cancelled.seatAllocationId()).orElseThrow();

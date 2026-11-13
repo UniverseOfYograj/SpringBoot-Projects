@@ -276,14 +276,14 @@ class Stage5CoreServicesIntegrationTests {
     // =========================================================================
 
     @Test
-    @DisplayName("DistanceResolver resolves 1447 km corridor and rejects unknown corridors")
+    @DisplayName("DistanceResolver resolves 1447 km corridor and estimated timetable run duration fallback")
     void distanceResolutionVerification() {
         // Known corridor via stops
         DistanceResolverService.ResolvedDistance res1 = distanceResolverService.resolveDistance(
                 journey, hwhStop.getJourneyStopId(), ndlsStop.getJourneyStopId());
         assertThat(res1.distanceKm()).isEqualTo(1447);
 
-        // Unknown corridor rejection (no 500 km fallback!)
+        // Unknown corridor resolves via timetable estimated run duration fallback
         Journey unknownJourney = new Journey();
         unknownJourney.setTrain(train);
         unknownJourney.setTrainRoute(route);
@@ -294,10 +294,20 @@ class Stage5CoreServicesIntegrationTests {
         unknownJourney.setArrivalTime(LocalTime.of(12, 0));
         unknownJourney = journeyRepository.save(unknownJourney);
 
-        Journey finalUnknown = unknownJourney;
-        assertThatThrownBy(() -> distanceResolverService.resolveDistance(finalUnknown, null, null))
+        DistanceResolverService.ResolvedDistance estimated =
+                distanceResolverService.resolveDistance(unknownJourney, null, null);
+        assertThat(estimated.distanceKm()).isEqualTo(220);
+        assertThat(estimated.distanceSource()).isEqualTo("ESTIMATED_RUN_DURATION");
+
+        // Retain true negative tests: null journey and non-existent stop IDs reject with BadRequestException
+        assertThatThrownBy(() -> distanceResolverService.resolveDistance(null, null, null))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("No reliable route distance data available");
+                .hasMessageContaining("Cannot resolve travel distance: journey is null");
+
+        Journey finalUnknown = unknownJourney;
+        assertThatThrownBy(() -> distanceResolverService.resolveDistance(finalUnknown, 999999L, 999998L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("Boarding or alighting stop not found for provided stop IDs");
     }
 
     @Test

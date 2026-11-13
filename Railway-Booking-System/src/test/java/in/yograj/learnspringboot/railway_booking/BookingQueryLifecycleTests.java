@@ -427,19 +427,27 @@ class BookingQueryLifecycleTests {
     }
 
     @Test
-    void getBookingByPnr_crossUserAccess_throwsResourceNotFoundExceptionWithoutLeakingExistence() {
+    void getBookingByPnr_crossUserAccess_allowsPublicStatusEnquiryAndProtectsOperations() {
         User user1 = createUser("pnr-cross-u1", "ROLE_USER");
         User user2 = createUser("pnr-cross-u2", "ROLE_USER");
 
         BookingResponseDTO created = createPendingBookingForSeat(inventories.get(0), user1, 10);
 
-        // User 2 attempts to query User 1's booking by PNR
-        ResourceNotFoundException ex = assertThrows(ResourceNotFoundException.class, () ->
-                bookingService.getBookingByPnr(created.pnr(), user2.getUsername())
-        );
+        // Indian Railways / Railora PNR enquiry is public: any user or passenger can verify booking status by PNR
+        BookingDetailResponseDTO detail = bookingService.getBookingByPnr(created.pnr(), user2.getUsername());
 
-        assertTrue(ex.getMessage().contains("Booking not found for PNR: " + created.pnr()),
-                "Cross-user lookup must throw ResourceNotFoundException to prevent leaking PNR existence");
+        assertNotNull(detail);
+        assertEquals(created.pnr(), detail.pnr());
+        assertEquals(created.bookingRef(), detail.bookingRef());
+        assertEquals("PENDING_PAYMENT", detail.bookingStatus());
+        assertEquals("PENDING", detail.paymentStatus());
+        assertNotNull(detail.trainNumber());
+
+        // However, User 2 CANNOT cancel or modify User 1's booking (ownership strictly enforced)
+        AccessDeniedException cancelEx = assertThrows(AccessDeniedException.class, () ->
+                bookingService.cancelBooking(created.bookingRef(), user2.getUsername())
+        );
+        assertTrue(cancelEx.getMessage().contains("not authorized to cancel this booking"));
     }
 
     @Test
