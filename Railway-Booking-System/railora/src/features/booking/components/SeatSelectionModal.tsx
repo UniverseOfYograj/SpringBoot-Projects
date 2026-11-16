@@ -20,15 +20,19 @@ import {
   Smartphone,
   Building2,
   Copy,
+  QrCode,
+  Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useAuth } from '@/features/auth/AuthContext';
 import { bookingApi } from '../api';
-import { clearPaymentAttempt } from '../paymentAttempt';
+import { clearPaymentAttempt, getOrCreatePaymentAttempt } from '../paymentAttempt';
 import {
   isMockPaymentEnabled,
   isRazorpayCheckoutEnabled,
+  isSimulatedPaymentEnabled,
   openRazorpayCheckout,
 } from '../razorpayCheckout';
 import type {
@@ -135,6 +139,8 @@ export function SeatSelectionModal({
   const [cardNumber, setCardNumber] = useState('4532 •••• •••• 8891');
   const [cardExpiry, setCardExpiry] = useState('08/29');
   const [cardCvv, setCardCvv] = useState('742');
+  const [simulateFailure, setSimulateFailure] = useState(false);
+  const [paymentAttemptPending, setPaymentAttemptPending] = useState(false);
   const paymentInFlight = useRef(false);
 
   // Countdown timer for active hold
@@ -834,27 +840,21 @@ export function SeatSelectionModal({
       const txnKey = `TXN-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 
       let paymentResult: PaymentResponseDTO;
-      if (typeof bookingApi.simulatePaymentSuccess === 'function') {
-        try {
-          paymentResult = await bookingApi.simulatePaymentSuccess(booking.bookingRef, {
-            idempotencyKey: txnKey,
-            reason: simMethod,
-          });
-        } catch {
-          paymentResult = await bookingApi.payBooking(booking.bookingRef, {
-            paymentMethod: paymentMode,
-            simulateFailure: false,
-          });
-        }
-      } else {
-        paymentResult = await bookingApi.payBooking(booking.bookingRef, {
-          paymentMethod: paymentMode,
-          simulateFailure: false,
+      if (isSimulatedPaymentEnabled() && typeof bookingApi.simulatePaymentSuccess === 'function') {
+        paymentResult = await bookingApi.simulatePaymentSuccess(booking.bookingRef, {
+          idempotencyKey: txnKey,
+          reason: simMethod,
         });
+      } else {
+        const attempt = getOrCreatePaymentAttempt(booking.bookingRef, simulateFailure);
+        setSimulateFailure(attempt.simulateFailure);
+        setPaymentAttemptPending(true);
+        paymentResult = await bookingApi.payBooking(booking.bookingRef, attempt);
       }
 
       if (paymentResult.paymentStatus === 'FAILED') {
         clearPaymentAttempt(booking.bookingRef);
+        setPaymentAttemptPending(false);
         if (paymentResult.bookingStatus === 'PENDING_PAYMENT') {
           setError(
             paymentResult.message ||
@@ -871,6 +871,9 @@ export function SeatSelectionModal({
         }
         return;
       }
+
+      clearPaymentAttempt(booking.bookingRef);
+      setPaymentAttemptPending(false);
 
       // Re-fetch booking from backend to guarantee latest 10-digit PNR and berth allocations
       try {
@@ -913,6 +916,18 @@ export function SeatSelectionModal({
     const isOnHold = seat.status === 'HOLD';
     const isBooked = seat.status === 'BOOKED';
 
+    const getBerthShort = (type: string) => {
+      const t = (type || '').toUpperCase();
+      if (t.includes('SIDE_LOWER') || t === 'SL') return 'SL';
+      if (t.includes('SIDE_UPPER') || t === 'SU') return 'SU';
+      if (t.includes('LOWER')) return 'LB';
+      if (t.includes('MIDDLE')) return 'MB';
+      if (t.includes('UPPER')) return 'UB';
+      if (t.includes('WINDOW')) return 'WIN';
+      if (t.includes('AISLE')) return 'AIS';
+      return t.slice(0, 3);
+    };
+
     return (
       <button
         key={seat.seatId}
@@ -920,33 +935,49 @@ export function SeatSelectionModal({
         disabled={!isAvailable}
         onClick={() => toggleSeatSelection(seat)}
         className={[
-          'flex flex-col items-center justify-center rounded-lg p-2.5 border text-xs font-semibold transition-interact cursor-pointer relative',
+          'group flex flex-col items-center justify-between rounded-xl p-2 sm:p-2.5 border text-xs font-semibold transition-all duration-200 cursor-pointer relative',
           isSelected
-            ? 'border-navy-700 bg-navy-700 text-white shadow-md ring-2 ring-navy-700/30'
+            ? 'border-teal-400 bg-gradient-to-b from-teal-600 via-teal-700 to-navy-900 text-white shadow-md ring-2 ring-teal-400/50 scale-[1.02]'
             : isAvailable
-              ? 'border-teal-500 bg-white text-teal-800 hover:bg-teal-50 hover:border-teal-600 shadow-2xs'
+              ? 'border-teal-500/40 bg-white text-ink-primary hover:border-teal-600 hover:bg-teal-50/70 hover:shadow-xs shadow-2xs'
               : isOnHold
-                ? 'border-amber-300 bg-amber-50 text-amber-700 cursor-not-allowed opacity-80'
+                ? 'border-amber-300 bg-amber-50/80 text-amber-700 cursor-not-allowed opacity-80'
                 : isBooked
                   ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-60'
                   : 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-60',
         ].join(' ')}
         aria-label={`Seat ${seat.seatNumber}, Coach ${seat.coachNumber}, ${seat.seatType}, ${seat.status}`}
       >
-        <div className="flex w-full items-center justify-between text-2xs mb-0.5">
-          <span className={isSelected ? 'text-teal-200' : 'text-ink-muted'}>
+        {/* Top Header of Seat: Coach + Berth Tag */}
+        <div className="flex w-full items-center justify-between text-[10px] mb-1">
+          <span className={isSelected ? 'text-teal-200 font-bold' : 'text-slate-400 font-mono'}>
             {seat.coachNumber}
           </span>
-          {isSelected && <span className="font-bold text-teal-300">✓</span>}
+          <span className={[
+            'rounded px-1 py-0.2 text-[9px] font-extrabold uppercase tracking-wider',
+            isSelected
+              ? 'bg-teal-400 text-navy-950 shadow-xs'
+              : isAvailable
+                ? 'bg-teal-100 text-teal-800'
+                : 'bg-slate-200 text-slate-500',
+          ].join(' ')}>
+            {getBerthShort(seat.seatType)}
+          </span>
         </div>
-        <span className="font-mono text-sm font-extrabold tracking-tight">
-          #{seat.seatNumber}
-        </span>
+
+        {/* Seat Berth Number */}
+        <div className="my-0.5 flex items-center justify-center">
+          <span className="font-mono text-base font-black tracking-tight">
+            #{seat.seatNumber}
+          </span>
+        </div>
+
+        {/* Berth Full Type Name */}
         <span
           className={[
-            'text-[9px] uppercase font-bold tracking-tight mt-0.5 px-1 rounded',
+            'text-[9px] uppercase font-bold tracking-tight mt-0.5 px-1.5 py-0.2 rounded w-full truncate text-center',
             isSelected
-              ? 'bg-navy-800 text-teal-300'
+              ? 'bg-navy-950/60 text-teal-300'
               : isAvailable
                 ? 'bg-teal-50 text-teal-700'
                 : isOnHold
@@ -1212,35 +1243,111 @@ export function SeatSelectionModal({
                 </div>
               )}
 
-              {/* Coach Selector Tabs */}
+              {/* Train Formation & Coach Rake Selector */}
               {currentClass && currentClass.coaches.length > 0 && (
-                <div className="mb-4 flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-semibold text-ink-secondary">Coach:</span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {currentClass.coaches.map((coach) => {
-                      const isCoachSelected = selectedCoachNumber === coach.coachNumber;
-                      return (
-                        <button
-                          key={coach.coachNumber}
-                          type="button"
-                          onClick={() => {
-                            setSelectedCoachNumber(coach.coachNumber);
-                            // Filter selected seats that don't belong to this coach
-                            setSelectedSeats((prev) =>
-                              prev.filter((s) => s.coachNumber === coach.coachNumber),
-                            );
-                          }}
-                          className={[
-                            'px-3 py-1 rounded-lg text-xs font-semibold border transition-interact cursor-pointer',
-                            isCoachSelected
-                              ? 'border-navy-700 bg-navy-700 text-white shadow-sm'
-                              : 'border-surface-border bg-white text-ink-secondary hover:bg-slate-50',
-                          ].join(' ')}
-                        >
-                          Coach {coach.coachNumber} ({coach.availableSeats} of {coach.totalSeats} avail)
-                        </button>
-                      );
-                    })}
+                <div className="mb-5 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-ink-primary flex items-center gap-1.5">
+                      <Train size={14} className="text-teal-600" />
+                      Train Formation & Coach Rake:
+                    </span>
+                    <span className="text-2xs text-ink-muted">
+                      Select a coach to view compartment berths
+                    </span>
+                  </div>
+
+                  {/* Horizontal Visual Train Track & Couplers */}
+                  <div className="relative rounded-2xl border border-slate-200/90 bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100 p-3.5 overflow-x-auto shadow-inner">
+                    {/* Metallic Railway Track Lines */}
+                    <div className="absolute bottom-3 left-0 right-0 h-[3px] bg-slate-300 border-b border-t border-slate-400" />
+
+                    <div className="flex items-center gap-2.5 relative z-10 pb-2">
+                      {/* High-Speed WAP-7 / Shinkansen Engine Locomotive */}
+                      <div className="flex-shrink-0 flex flex-col items-center select-none" title="WAP-7 High Speed Locomotive">
+                        <div className="h-14 w-16 rounded-l-2xl rounded-r-md bg-gradient-to-r from-navy-900 via-slate-800 to-navy-700 text-white border border-navy-800 shadow-sm flex flex-col items-center justify-center p-1 relative">
+                          {/* Locomotive Headlight Glow */}
+                          <div className="absolute -left-1 top-4 h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_8px_#fbbf24] animate-pulse" />
+                          <span className="text-[8px] font-black uppercase tracking-widest text-teal-300">WAP-7</span>
+                          <Train size={16} className="text-white my-0.5" />
+                          <span className="text-[7px] font-mono text-slate-300 font-bold">ENGINE</span>
+                        </div>
+                        {/* Loco Wheel Bogie */}
+                        <div className="flex gap-2.5 mt-1">
+                          <div className="h-2 w-2 rounded-full bg-slate-800 border border-slate-500" />
+                          <div className="h-2 w-2 rounded-full bg-slate-800 border border-slate-500" />
+                        </div>
+                      </div>
+
+                      {/* Coupler Connector */}
+                      <div className="w-2.5 h-1 bg-slate-500 rounded-full flex-shrink-0 shadow-xs" />
+
+                      {/* Coach Cars List */}
+                      {currentClass.coaches.map((coach, cIdx) => {
+                        const isCoachSelected = selectedCoachNumber === coach.coachNumber;
+                        return (
+                          <div key={coach.coachNumber} className="flex items-center gap-2 flex-shrink-0">
+                            <button
+                              key={coach.coachNumber}
+                              type="button"
+                              onClick={() => {
+                                setSelectedCoachNumber(coach.coachNumber);
+                                setSelectedSeats((prev) =>
+                                  prev.filter((s) => s.coachNumber === coach.coachNumber),
+                                );
+                              }}
+                              className={[
+                                'group flex flex-col items-center rounded-xl p-2 border transition-all duration-200 cursor-pointer text-left min-w-[95px] relative',
+                                isCoachSelected
+                                  ? 'border-teal-500 bg-gradient-to-b from-teal-50/90 to-white shadow-md ring-2 ring-teal-500/30 -translate-y-1'
+                                  : 'border-slate-300 bg-white hover:border-teal-300 hover:bg-slate-50 shadow-2xs',
+                              ].join(' ')}
+                              aria-label={`Coach ${coach.coachNumber} (${coach.availableSeats} of ${coach.totalSeats} avail)`}
+                            >
+                              {/* Coach Car Header */}
+                              <div className="flex items-center justify-between w-full mb-1">
+                                <span className={[
+                                  'text-xs font-black tracking-tight font-mono px-1.5 py-0.5 rounded',
+                                  isCoachSelected
+                                    ? 'bg-teal-600 text-white shadow-2xs'
+                                    : 'bg-slate-100 text-navy-800 group-hover:bg-teal-50 group-hover:text-teal-700',
+                                ].join(' ')}>
+                                  Coach {coach.coachNumber}
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-500 font-mono">
+                                  {coach.coachType}
+                                </span>
+                              </div>
+
+                              {/* Miniature Coach Windows */}
+                              <div className="flex items-center justify-center gap-1 w-full my-1">
+                                <div className={['h-2 w-3 rounded-xs border', isCoachSelected ? 'bg-teal-200/70 border-teal-400' : 'bg-slate-200 border-slate-300'].join(' ')} />
+                                <div className={['h-2 w-3 rounded-xs border', isCoachSelected ? 'bg-teal-200/70 border-teal-400' : 'bg-slate-200 border-slate-300'].join(' ')} />
+                                <div className={['h-2 w-3 rounded-xs border', isCoachSelected ? 'bg-teal-200/70 border-teal-400' : 'bg-slate-200 border-slate-300'].join(' ')} />
+                              </div>
+
+                              {/* Seat Availability Metric */}
+                              <span className={[
+                                'text-[9px] font-semibold truncate w-full text-center',
+                                isCoachSelected ? 'text-teal-800 font-bold' : 'text-slate-500',
+                              ].join(' ')}>
+                                {coach.availableSeats} of {coach.totalSeats} avail
+                              </span>
+
+                              {/* Wheels / Bogie Truck */}
+                              <div className="flex justify-between w-4/5 mt-1 -mb-1">
+                                <div className="h-1.5 w-1.5 rounded-full bg-slate-700 border border-slate-500" />
+                                <div className="h-1.5 w-1.5 rounded-full bg-slate-700 border border-slate-500" />
+                              </div>
+                            </button>
+
+                            {/* Coupler between coaches */}
+                            {cIdx < currentClass.coaches.length - 1 && (
+                              <div className="w-2.5 h-1 bg-slate-400 rounded-full flex-shrink-0" />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1664,166 +1771,221 @@ export function SeatSelectionModal({
                 </div>
               </div>
 
-              {/* Payment Mode Selector (IRCTC Style) */}
-              <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
-                <div className="flex items-center justify-between border-b border-surface-border pb-2">
-                  <span className="text-xs font-bold text-navy-800 flex items-center gap-1.5">
-                    <CreditCard size={15} className="text-teal-600" />
-                    Select Payment Mode
-                  </span>
-                  <span className="flex items-center gap-1 text-2xs text-teal-700 font-medium">
-                    <ShieldCheck size={13} />
-                    256-Bit SSL Encrypted
-                  </span>
-                </div>
-
-                {/* Tabs */}
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMode('UPI')}
-                    className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
-                      paymentMode === 'UPI'
-                        ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
-                        : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
-                    }`}
-                  >
-                    <Smartphone size={18} className="mb-1 text-teal-600" />
-                    <span>UPI / QR</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMode('CARD')}
-                    className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
-                      paymentMode === 'CARD'
-                        ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
-                        : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
-                    }`}
-                  >
-                    <CreditCard size={18} className="mb-1 text-teal-600" />
-                    <span>Credit / Debit</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMode('NETBANKING')}
-                    className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
-                      paymentMode === 'NETBANKING'
-                        ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
-                        : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
-                    }`}
-                  >
-                    <Building2 size={18} className="mb-1 text-teal-600" />
-                    <span>Net Banking</span>
-                  </button>
-                </div>
-
-                {/* Tab Content */}
-                {paymentMode === 'UPI' && (
-                  <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
-                    <label className="block text-2xs font-semibold text-ink-secondary">
-                      Enter UPI ID / VPA (Google Pay, PhonePe, Paytm, BHIM)
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={upiId}
-                        onChange={(e) => setUpiId(e.target.value)}
-                        placeholder="e.g. yourname@okhdfcbank"
-                        className="flex-1 rounded-lg border border-surface-border bg-white px-3 py-2 text-xs text-ink-primary font-mono focus:border-teal-500 focus:outline-none"
-                      />
-                      <span className="flex items-center text-2xs text-teal-700 font-semibold px-2 bg-teal-50 rounded-lg border border-teal-200">
-                        Verified
-                      </span>
-                    </div>
-                    <p className="text-3xs text-ink-muted">
-                      A payment request will be authorized instantly to confirm your reservation.
-                    </p>
+              {/* Payment Mode Selector / Gateway Box */}
+              {isSimulatedPaymentEnabled() ? (
+                <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-4 mb-4">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-teal-900 mb-1">
+                    <CreditCard size={16} className="text-teal-700" />
+                    <span>Demo Checkout (Simulated Gateway)</span>
                   </div>
-                )}
+                  <p className="text-xs text-teal-700 leading-relaxed mb-3">
+                    Interactive payment simulation for demonstration. No real money or bank accounts will be charged.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-surface-border pb-2">
+                    <span className="text-xs font-bold text-navy-800 flex items-center gap-1.5">
+                      <CreditCard size={15} className="text-teal-600" />
+                      Select Payment Mode
+                    </span>
+                    <span className="flex items-center gap-1 text-2xs text-teal-700 font-medium">
+                      <ShieldCheck size={13} />
+                      256-Bit SSL Encrypted
+                    </span>
+                  </div>
 
-                {paymentMode === 'CARD' && (
-                  <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
-                    <div>
-                      <label className="block text-2xs font-semibold text-ink-secondary mb-1">
-                        Card Number
+                  {/* Tabs */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMode('UPI')}
+                      className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
+                        paymentMode === 'UPI'
+                          ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
+                          : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
+                      }`}
+                    >
+                      <Smartphone size={18} className="mb-1 text-teal-600" />
+                      <span>UPI / QR</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMode('CARD')}
+                      className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
+                        paymentMode === 'CARD'
+                          ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
+                          : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
+                      }`}
+                    >
+                      <CreditCard size={18} className="mb-1 text-teal-600" />
+                      <span>Credit / Debit</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMode('NETBANKING')}
+                      className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
+                        paymentMode === 'NETBANKING'
+                          ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
+                          : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
+                      }`}
+                    >
+                      <Building2 size={18} className="mb-1 text-teal-600" />
+                      <span>Net Banking</span>
+                    </button>
+                  </div>
+
+                  {/* Tab Content */}
+                  {paymentMode === 'UPI' && (
+                    <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
+                      <label className="block text-2xs font-semibold text-ink-secondary">
+                        Enter UPI ID / VPA (Google Pay, PhonePe, Paytm, BHIM)
                       </label>
-                      <input
-                        type="text"
-                        value={cardNumber}
-                        onChange={(e) => setCardNumber(e.target.value)}
-                        className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-xs font-mono text-ink-primary focus:border-teal-500 focus:outline-none"
-                        placeholder="•••• •••• •••• ••••"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={upiId}
+                          onChange={(e) => setUpiId(e.target.value)}
+                          placeholder="e.g. yourname@okhdfcbank"
+                          className="flex-1 rounded-lg border border-surface-border bg-white px-3 py-2 text-xs text-ink-primary font-mono focus:border-teal-500 focus:outline-none"
+                        />
+                        <span className="flex items-center text-2xs text-teal-700 font-semibold px-2 bg-teal-50 rounded-lg border border-teal-200">
+                          Verified
+                        </span>
+                      </div>
+                      <p className="text-3xs text-ink-muted">
+                        A payment request will be authorized instantly to confirm your reservation.
+                      </p>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                  )}
+
+                  {paymentMode === 'CARD' && (
+                    <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
                       <div>
                         <label className="block text-2xs font-semibold text-ink-secondary mb-1">
-                          Expiry (MM/YY)
+                          Card Number
                         </label>
                         <input
                           type="text"
-                          value={cardExpiry}
-                          onChange={(e) => setCardExpiry(e.target.value)}
+                          value={cardNumber}
+                          onChange={(e) => setCardNumber(e.target.value)}
                           className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-xs font-mono text-ink-primary focus:border-teal-500 focus:outline-none"
+                          placeholder="•••• •••• •••• ••••"
                         />
                       </div>
-                      <div>
-                        <label className="block text-2xs font-semibold text-ink-secondary mb-1">
-                          CVV
-                        </label>
-                        <input
-                          type="password"
-                          value={cardCvv}
-                          maxLength={4}
-                          onChange={(e) => setCardCvv(e.target.value)}
-                          className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-xs font-mono text-ink-primary focus:border-teal-500 focus:outline-none"
-                        />
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-2xs font-semibold text-ink-secondary mb-1">
+                            Expiry (MM/YY)
+                          </label>
+                          <input
+                            type="text"
+                            value={cardExpiry}
+                            onChange={(e) => setCardExpiry(e.target.value)}
+                            className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-xs font-mono text-ink-primary focus:border-teal-500 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-2xs font-semibold text-ink-secondary mb-1">
+                            CVV
+                          </label>
+                          <input
+                            type="password"
+                            value={cardCvv}
+                            maxLength={4}
+                            onChange={(e) => setCardCvv(e.target.value)}
+                            className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-xs font-mono text-ink-primary focus:border-teal-500 focus:outline-none"
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {paymentMode === 'NETBANKING' && (
-                  <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
-                    <label className="block text-2xs font-semibold text-ink-secondary mb-1">
-                      Choose Your Bank
-                    </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {['SBI', 'HDFC', 'ICICI', 'AXIS', 'PNB', 'KOTAK'].map((bank) => (
-                        <button
-                          key={bank}
-                          type="button"
-                          onClick={() => setSelectedBank(bank)}
-                          className={`px-3 py-2 rounded-lg text-xs font-bold border transition-interact text-center ${
-                            selectedBank === bank
-                              ? 'bg-navy-800 text-white border-navy-800'
-                              : 'bg-white text-ink-primary border-surface-border hover:border-teal-500'
-                          }`}
-                        >
-                          {bank}
-                        </button>
-                      ))}
+                  {paymentMode === 'NETBANKING' && (
+                    <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
+                      <label className="block text-2xs font-semibold text-ink-secondary mb-1">
+                        Choose Your Bank
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['SBI', 'HDFC', 'ICICI', 'AXIS', 'PNB', 'KOTAK'].map((bank) => (
+                          <button
+                            key={bank}
+                            type="button"
+                            onClick={() => setSelectedBank(bank)}
+                            className={`px-3 py-2 rounded-lg text-xs font-bold border transition-interact text-center ${
+                              selectedBank === bank
+                                ? 'bg-navy-800 text-white border-navy-800'
+                                : 'bg-white text-ink-primary border-surface-border hover:border-teal-500'
+                            }`}
+                          >
+                            {bank}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
+
+              {/* Simulated Failure Toggle */}
+              {isMockPaymentEnabled() && !isSimulatedPaymentEnabled() && (
+                <div className="flex items-center gap-2 text-xs text-ink-secondary bg-surface-muted/50 p-2.5 rounded-lg border border-surface-border">
+                  <input
+                    id="simulate-failure-checkbox"
+                    type="checkbox"
+                    checked={simulateFailure}
+                    onChange={(e) => setSimulateFailure(e.target.checked)}
+                    disabled={paymentAttemptPending}
+                    className="rounded border-surface-border text-teal-600 focus:ring-teal-500 h-3.5 w-3.5"
+                  />
+                  <label htmlFor="simulate-failure-checkbox" className="cursor-pointer select-none">
+                    Simulate gateway payment failure (test resilience and retry capability)
+                  </label>
+                </div>
+              )}
 
               {/* Actions */}
               <div className="flex items-center justify-between border-t border-surface-border pt-4">
-                <Button variant="secondary" size="sm" onClick={() => setStep('passengers')} disabled={actionLoading}>
-                  Back to Passengers
+                <Button variant="secondary" size="sm" onClick={() => setStep(selectedSeats.length > 1 ? 'passengers' : 'select-seat')} disabled={actionLoading}>
+                  Back
                 </Button>
-                <Button
-                  variant="accent"
-                  size="md"
-                  onClick={handlePay}
-                  isLoading={actionLoading}
-                  className="font-bold shadow-md"
-                >
-                  <Lock size={14} />
-                  Pay ₹{booking.amount != null ? booking.amount.toFixed(2) : (totalFare != null ? totalFare.toFixed(2) : '')} & Confirm Ticket
-                  <ArrowRight size={14} />
-                </Button>
+                {isSimulatedPaymentEnabled() ? (
+                  <Button
+                    variant="accent"
+                    size="md"
+                    onClick={handlePay}
+                    disabled={paymentAttemptPending}
+                  >
+                    <CreditCard size={15} />
+                    Demo Checkout
+                  </Button>
+                ) : (
+                  <Button
+                    variant="accent"
+                    size="md"
+                    onClick={handlePay}
+                    isLoading={actionLoading}
+                    disabled={
+                      (paymentAttemptPending && actionLoading) ||
+                      (!isRazorpayCheckoutEnabled() && !isMockPaymentEnabled()) ||
+                      (isRazorpayCheckoutEnabled() && (!booking.amount || booking.amount <= 0))
+                    }
+                    className="font-bold shadow-md"
+                  >
+                    {error ? (
+                      <>
+                        <RefreshCw size={14} />
+                        Retry Payment
+                      </>
+                    ) : (
+                      <>
+                        <Lock size={14} />
+                        Pay {booking.amount != null ? `₹${booking.amount.toFixed(2)}` : (totalFare != null ? `₹${totalFare.toFixed(2)}` : '')} & Confirm
+                        <ArrowRight size={14} />
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
             </div>
           ) : step === 'confirmed' && payment ? (
@@ -1838,94 +2000,138 @@ export function SeatSelectionModal({
                 </p>
               </div>
 
-              {/* PNR Highlight Card */}
-              <div className="mx-auto max-w-lg rounded-2xl border-2 border-teal-500/30 bg-teal-50/60 p-4 text-center shadow-xs">
-                <span className="text-2xs font-extrabold uppercase tracking-widest text-teal-800">
-                  Indian Railways Electronic Ticket • PNR Number
-                </span>
-                <div className="flex items-center justify-center gap-2.5 my-1.5">
-                  <span className="font-mono text-2xl sm:text-3xl font-black text-navy-800 tracking-wider">
-                    {booking?.pnr || payment.bookingRef}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pnrToCopy = booking?.pnr || payment.bookingRef;
-                      void navigator.clipboard.writeText(pnrToCopy);
-                      setRestoredNotification('PNR copied to clipboard!');
-                      setTimeout(() => setRestoredNotification(null), 3000);
-                    }}
-                    title="Copy PNR"
-                    className="rounded-lg p-1.5 text-teal-700 hover:bg-teal-100 transition-interact"
-                  >
-                    <Copy size={18} />
-                  </button>
-                </div>
-                <div className="flex items-center justify-center gap-2">
-                  <span className="inline-block px-3 py-0.5 rounded-full text-2xs font-extrabold bg-teal-600 text-white shadow-2xs">
-                    STATUS: CONFIRMED (CNF)
-                  </span>
-                  <span className="text-2xs text-ink-muted font-mono">
-                    Txn: {payment.transactionRef}
-                  </span>
-                </div>
-              </div>
+              {/* Luxury Railora / Bharat Railways Digital Boarding Pass */}
+              <div className="mx-auto max-w-lg rounded-2xl border border-teal-500/40 bg-gradient-to-b from-white via-slate-50/80 to-teal-50/40 p-5 text-left shadow-md relative overflow-hidden">
+                {/* Boarding Pass Header Strip */}
+                <div className="flex items-center justify-between border-b border-teal-500/20 pb-3 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-600 text-white shadow-xs">
+                      <Train size={16} />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-teal-900 block leading-tight">
+                        BHARAT RAILWAYS • ELECTRONIC TICKET
+                      </span>
+                      <span className="text-3xs font-semibold text-slate-500">
+                        IRCTC 2.0 Confirmed Electronic Reservation Slip
+                      </span>
+                    </div>
+                  </div>
 
-              {/* Journey Details Card */}
-              <div className="mx-auto max-w-lg rounded-xl border border-surface-border bg-surface-subtle/30 p-4 text-left text-xs space-y-3">
-                <div className="grid grid-cols-2 gap-3 border-b border-surface-border pb-3">
-                  <div>
-                    <span className="text-ink-muted block text-2xs">Train</span>
-                    <p className="font-bold text-navy-800">{train.trainNumber} - {train.trainName}</p>
-                  </div>
-                  <div>
-                    <span className="text-ink-muted block text-2xs">Class</span>
-                    <p className="font-bold text-navy-800">
-                      {currentClass?.className ?? selectedClassCode ?? 'Standard'} ({currentClass?.classCode ?? booking?.coachNumber})
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-ink-muted block text-2xs">From / Departure</span>
-                    <p className="font-semibold text-ink-primary">
-                      {train.fromStationName} ({train.fromStationCode}) • {train.fromDepartureTime ?? 'Scheduled'}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-ink-muted block text-2xs">To / Arrival</span>
-                    <p className="font-semibold text-ink-primary">
-                      {train.toStationName} ({train.toStationCode}) • {train.toArrivalTime ?? 'Scheduled'}
-                    </p>
-                  </div>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 text-2xs font-extrabold text-emerald-800 shadow-2xs">
+                    <CheckCircle2 size={12} className="text-emerald-700" />
+                    CONFIRMED (CNF)
+                  </span>
                 </div>
 
-                {/* Confirmed Passenger & Berth Table */}
-                {booking?.passengers && booking.passengers.length > 0 && (
-                  <div>
-                    <span className="text-2xs font-bold text-ink-secondary block mb-1.5">
-                      Confirmed Passengers & Berths:
+                {/* PNR Highlight Block */}
+                <div className="rounded-xl border border-teal-200 bg-white p-3.5 mb-3.5 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-3xs font-black uppercase tracking-widest text-slate-400">
+                      10-DIGIT PNR NUMBER
                     </span>
-                    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+                    <span className="text-2xs text-teal-700 font-bold flex items-center gap-1">
+                      <Sparkles size={11} />
+                      Authoritative Allocation
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="font-mono text-2xl sm:text-3xl font-black text-navy-900 tracking-wider">
+                      {booking?.pnr || payment.bookingRef}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const pnrToCopy = booking?.pnr || payment.bookingRef;
+                        void navigator.clipboard.writeText(pnrToCopy);
+                        setRestoredNotification('PNR copied to clipboard!');
+                        setTimeout(() => setRestoredNotification(null), 3000);
+                      }}
+                      title="Copy PNR"
+                      className="rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-800 hover:bg-teal-100 transition-interact flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <Copy size={13} />
+                      Copy PNR
+                    </button>
+                  </div>
+                </div>
+
+                {/* Train Route & Timing Grid */}
+                <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-white/70 p-3 text-xs mb-3.5">
+                  <div>
+                    <span className="text-slate-400 block text-3xs uppercase font-bold tracking-wider">Train</span>
+                    <p className="font-extrabold text-navy-900 text-xs mt-0.5">{train.trainNumber} - {train.trainName}</p>
+                    <span className="text-3xs font-semibold text-teal-700 font-mono">
+                      Class: {currentClass?.className ?? selectedClassCode ?? 'Standard'} ({currentClass?.classCode ?? booking?.coachNumber})
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-3xs uppercase font-bold tracking-wider">Travel Date</span>
+                    <p className="font-extrabold text-navy-900 text-xs mt-0.5 flex items-center gap-1">
+                      <Calendar size={12} className="text-teal-600" />
+                      {travelDate}
+                    </p>
+                    <span className="text-3xs text-slate-500 font-mono block">
+                      <span>Txn: </span><span className="font-bold">{payment.transactionRef}</span>
+                    </span>
+                    <span className="text-3xs text-teal-800 font-semibold block">
+                      <span>Payment Mode:</span> <span className="font-bold">{payment.paymentMethod === 'SIMULATED' ? 'SIMULATED (Demo)' : payment.paymentMethod}</span>
+                    </span>
+                  </div>
+                  <div className="border-t border-slate-100 pt-2">
+                    <span className="text-slate-400 block text-3xs uppercase font-bold tracking-wider">Boarding From</span>
+                    <p className="font-bold text-ink-primary text-xs mt-0.5">{train.fromStationName} ({train.fromStationCode})</p>
+                    <span className="text-3xs text-slate-500">Dept: {train.fromDepartureTime ?? 'Scheduled'}</span>
+                  </div>
+                  <div className="border-t border-slate-100 pt-2">
+                    <span className="text-slate-400 block text-3xs uppercase font-bold tracking-wider">Alighting At</span>
+                    <p className="font-bold text-ink-primary text-xs mt-0.5">{train.toStationName} ({train.toStationCode})</p>
+                    <span className="text-3xs text-slate-500">Arrv: {train.toArrivalTime ?? 'Scheduled'}</span>
+                  </div>
+                </div>
+
+                {/* Confirmed Passenger & Berth Allocations Table */}
+                {booking?.passengers && booking.passengers.length > 0 && (
+                  <div className="mb-3.5">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-2xs font-extrabold text-navy-900 uppercase tracking-wider flex items-center gap-1">
+                        <Users size={12} className="text-teal-600" />
+                        Confirmed Passengers & Berths:
+                      </span>
+                      <span className="text-3xs font-bold text-teal-800">
+                        {booking.passengers.length} {booking.passengers.length === 1 ? 'Seat' : 'Seats'} Assigned
+                      </span>
+                    </div>
+
+                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs">
                       <table className="w-full text-left text-2xs">
-                        <thead className="bg-surface-subtle text-ink-muted border-b border-surface-border">
+                        <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 text-3xs font-bold uppercase tracking-wider">
                           <tr>
-                            <th className="py-1.5 px-3">#</th>
-                            <th className="py-1.5 px-3">Passenger</th>
-                            <th className="py-1.5 px-3">Age/Sex</th>
-                            <th className="py-1.5 px-3">Coach</th>
-                            <th className="py-1.5 px-3">Berth</th>
-                            <th className="py-1.5 px-3">Status</th>
+                            <th className="py-2 px-3">#</th>
+                            <th className="py-2 px-3">Passenger</th>
+                            <th className="py-2 px-3">Age/Sex</th>
+                            <th className="py-2 px-3">Coach</th>
+                            <th className="py-2 px-3">Berth</th>
+                            <th className="py-2 px-3">Status</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-surface-border">
+                        <tbody className="divide-y divide-slate-100">
                           {booking.passengers.map((p, idx) => (
-                            <tr key={p.passengerId || idx} className="hover:bg-teal-50/30">
-                              <td className="py-2 px-3 font-semibold text-ink-muted">{idx + 1}</td>
-                              <td className="py-2 px-3 font-bold text-ink-primary">{p.fullName}</td>
-                              <td className="py-2 px-3 text-ink-secondary">{p.age} / {p.gender}</td>
-                              <td className="py-2 px-3 font-mono font-bold text-navy-800">{p.coachNumber || booking.coachNumber}</td>
-                              <td className="py-2 px-3 font-mono font-bold text-teal-700">#{p.seatNumber} ({p.berthPreference || 'LOWER'})</td>
+                            <tr key={p.passengerId || idx} className="hover:bg-teal-50/40">
+                              <td className="py-2 px-3 font-semibold text-slate-400">{idx + 1}</td>
+                              <td className="py-2 px-3 font-bold text-navy-900">{p.fullName}</td>
+                              <td className="py-2 px-3 text-slate-600">{p.age} / {p.gender}</td>
+                              <td className="py-2 px-3 font-mono font-black text-navy-800">
+                                <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                  {p.coachNumber || booking.coachNumber}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 font-mono font-bold text-teal-700">
+                                #{p.seatNumber} ({p.berthPreference || 'LOWER'})
+                              </td>
                               <td className="py-2 px-3">
-                                <span className="px-1.5 py-0.5 rounded text-3xs font-extrabold bg-teal-100 text-teal-800">
+                                <span className="px-1.5 py-0.5 rounded text-3xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
                                   CNF
                                 </span>
                               </td>
@@ -1937,12 +2143,40 @@ export function SeatSelectionModal({
                   </div>
                 )}
 
-                {/* Payment Summary */}
-                <div className="flex items-center justify-between border-t border-surface-border pt-2 text-2xs">
-                  <span className="text-ink-muted">Total Fare Paid:</span>
-                  <span className="font-mono text-sm font-black text-teal-700">
-                    ₹{payment.amount?.toFixed(2)}
-                  </span>
+                {/* Perforated Tear-Off Divider */}
+                <div className="relative my-4 border-t-2 border-dashed border-slate-300">
+                  <div className="absolute -left-7 -top-2.5 h-5 w-5 rounded-full bg-surface-card border border-slate-300" />
+                  <div className="absolute -right-7 -top-2.5 h-5 w-5 rounded-full bg-surface-card border border-slate-300" />
+                </div>
+
+                {/* Security Verification & QR Code Strip */}
+                <div className="flex items-center justify-between rounded-xl bg-slate-900 text-white p-3 shadow-inner">
+                  <div className="flex items-center gap-3">
+                    {/* Simulated Dynamic QR Code */}
+                    <div className="h-12 w-12 rounded-lg bg-white p-1 flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <QrCode size={40} className="text-slate-950" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] font-bold text-teal-300 block uppercase tracking-wider">
+                        Scan Onboard (TTE Terminal)
+                      </span>
+                      <p className="text-3xs text-slate-400 font-mono">
+                        Valid with Government Photo ID
+                      </p>
+                      {/* Barcode Graphic */}
+                      <div className="font-mono text-[9px] text-slate-500 tracking-widest select-none pt-0.5">
+                        ||| | |||| | ||| || ||||
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-3xs text-slate-400 block uppercase font-semibold">Total Fare Paid</span>
+                    <span className="font-mono text-lg font-black text-emerald-400">
+                      ₹{payment.amount?.toFixed(2)}
+                    </span>
+                    <span className="text-3xs text-emerald-300 block font-bold">100% SECURED</span>
+                  </div>
                 </div>
               </div>
 
