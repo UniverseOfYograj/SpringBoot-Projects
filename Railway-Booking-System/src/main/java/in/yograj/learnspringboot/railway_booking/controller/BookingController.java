@@ -11,9 +11,12 @@ import in.yograj.learnspringboot.railway_booking.dto.RazorpayPaymentStatusDTO;
 import in.yograj.learnspringboot.railway_booking.dto.RazorpayVerifyRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.SimulatedPaymentRequestDTO;
 import in.yograj.learnspringboot.railway_booking.dto.SimulatedPaymentSummaryDTO;
+import in.yograj.learnspringboot.railway_booking.security.PnrRateLimiter;
 import in.yograj.learnspringboot.railway_booking.service.BookingService;
 import in.yograj.learnspringboot.railway_booking.service.RazorpayPaymentService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -34,10 +37,19 @@ public class BookingController {
 
     private final BookingService bookingService;
     private final RazorpayPaymentService razorpayPaymentService;
+    private final PnrRateLimiter pnrRateLimiter;
 
     public BookingController(BookingService bookingService, RazorpayPaymentService razorpayPaymentService) {
+        this(bookingService, razorpayPaymentService, new PnrRateLimiter(30, 60));
+    }
+
+    @Autowired
+    public BookingController(BookingService bookingService,
+                             RazorpayPaymentService razorpayPaymentService,
+                             PnrRateLimiter pnrRateLimiter) {
         this.bookingService = bookingService;
         this.razorpayPaymentService = razorpayPaymentService;
+        this.pnrRateLimiter = pnrRateLimiter;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -136,12 +148,34 @@ public class BookingController {
         return ResponseEntity.ok(bookingService.cancelBooking(bookingRef, authentication.getName()));
     }
 
+    public ResponseEntity<BookingDetailResponseDTO> getBookingByPnr(String pnr, Authentication authentication) {
+        return getBookingByPnr(pnr, authentication, null);
+    }
+
     @GetMapping("/pnr/{pnr}")
     public ResponseEntity<BookingDetailResponseDTO> getBookingByPnr(
             @PathVariable String pnr,
-            Authentication authentication) {
+            Authentication authentication,
+            HttpServletRequest request) {
+        if (pnrRateLimiter != null) {
+            pnrRateLimiter.checkAllowed(resolveClientIp(request));
+        }
         String username = authentication != null ? authentication.getName() : null;
         return ResponseEntity.ok(bookingService.getBookingByPnr(pnr, username));
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        if (request == null) {
+            return "127.0.0.1";
+        }
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
+            String firstIp = xForwardedFor.split(",")[0].trim();
+            if (!firstIp.isEmpty() && !firstIp.equalsIgnoreCase("unknown")) {
+                return firstIp;
+            }
+        }
+        return request.getRemoteAddr() != null ? request.getRemoteAddr() : "127.0.0.1";
     }
 
     @PreAuthorize("isAuthenticated()")

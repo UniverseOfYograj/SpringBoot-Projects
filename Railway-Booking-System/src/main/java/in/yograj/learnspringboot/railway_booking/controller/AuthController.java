@@ -168,6 +168,13 @@ public class AuthController {
         if (request == null) {
             return "127.0.0.1";
         }
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
+            String firstIp = xForwardedFor.split(",")[0].trim();
+            if (!firstIp.isEmpty() && !firstIp.equalsIgnoreCase("unknown")) {
+                return firstIp;
+            }
+        }
         return request.getRemoteAddr() != null ? request.getRemoteAddr() : "127.0.0.1";
     }
 }

@@ -35,6 +35,7 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -114,6 +115,7 @@ class BookingPaymentLifecycleTests {
     @Autowired private JourneyService journeyService;
     @Autowired private SeatInventoryService seatInventoryService;
     @Autowired private BookingService bookingService;
+    @Autowired private Clock clock;
 
     private Long journeyId;
     private List<JourneyStop> runStops;
@@ -264,7 +266,7 @@ class BookingPaymentLifecycleTests {
         Booking pendingBooking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
         Long allocationId = pendingBooking.getSeatAllocation().getSeatAllocationId();
         SeatAllocation allocation = allocationRepository.findById(allocationId).orElseThrow();
-        allocation.setHoldExpiresAt(LocalDateTime.now().minusSeconds(10));
+        allocation.setHoldExpiresAt(LocalDateTime.now(clock).minusSeconds(10));
         allocationRepository.save(allocation);
 
         PaymentRequestDTO request = new PaymentRequestDTO("MOCK_CARD", null, false);
@@ -664,7 +666,7 @@ class BookingPaymentLifecycleTests {
         txn1.setAmount(EXPECTED_2A_200KM_FARE);
         txn1.setStatus("SUCCESS");
         txn1.setIdempotencyKey("dup-db-key");
-        txn1.setCreatedAt(LocalDateTime.now());
+        txn1.setCreatedAt(LocalDateTime.now(clock));
         paymentTransactionRepository.saveAndFlush(txn1);
 
         PaymentTransaction txn2 = new PaymentTransaction();
@@ -675,7 +677,7 @@ class BookingPaymentLifecycleTests {
         txn2.setAmount(EXPECTED_2A_200KM_FARE);
         txn2.setStatus("SUCCESS");
         txn2.setIdempotencyKey("dup-db-key");
-        txn2.setCreatedAt(LocalDateTime.now());
+        txn2.setCreatedAt(LocalDateTime.now(clock));
 
         assertThrows(DataIntegrityViolationException.class, () ->
                 paymentTransactionRepository.saveAndFlush(txn2));
@@ -696,7 +698,7 @@ class BookingPaymentLifecycleTests {
         txn1.setAmount(EXPECTED_2A_200KM_FARE);
         txn1.setStatus("FAILED");
         txn1.setIdempotencyKey(null);
-        txn1.setCreatedAt(LocalDateTime.now());
+        txn1.setCreatedAt(LocalDateTime.now(clock));
         assertDoesNotThrow(() -> paymentTransactionRepository.saveAndFlush(txn1));
 
         PaymentTransaction txn2 = new PaymentTransaction();
@@ -707,7 +709,7 @@ class BookingPaymentLifecycleTests {
         txn2.setAmount(EXPECTED_2A_200KM_FARE);
         txn2.setStatus("SUCCESS");
         txn2.setIdempotencyKey(null);
-        txn2.setCreatedAt(LocalDateTime.now());
+        txn2.setCreatedAt(LocalDateTime.now(clock));
         assertDoesNotThrow(() -> paymentTransactionRepository.saveAndFlush(txn2));
     }
 
@@ -788,7 +790,7 @@ class BookingPaymentLifecycleTests {
         assertEquals("HOLD", allocA.getStatus());
 
         // 2. User A's hold expires
-        allocA.setHoldExpiresAt(LocalDateTime.now().minusMinutes(5));
+        allocA.setHoldExpiresAt(LocalDateTime.now(clock).minusMinutes(5));
         allocationRepository.saveAndFlush(allocA);
 
         // 3. User B holds the exact same seat and segment
@@ -871,7 +873,7 @@ class BookingPaymentLifecycleTests {
 
         // Now hold window expires
         SeatAllocation alloc = bookingAfterFails.getSeatAllocation();
-        alloc.setHoldExpiresAt(LocalDateTime.now().minusMinutes(2));
+        alloc.setHoldExpiresAt(LocalDateTime.now(clock).minusMinutes(2));
         allocationRepository.saveAndFlush(alloc);
 
         // Attempt 3: User tries to retry payment after hold has expired

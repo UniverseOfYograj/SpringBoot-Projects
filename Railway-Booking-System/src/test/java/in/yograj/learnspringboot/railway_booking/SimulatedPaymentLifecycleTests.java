@@ -46,6 +46,7 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -87,6 +88,7 @@ class SimulatedPaymentLifecycleTests {
     @Autowired private JourneyService journeyService;
     @Autowired private SeatInventoryService seatInventoryService;
     @Autowired private BookingService bookingService;
+    @Autowired private Clock clock;
 
     private Long journeyId;
     private List<JourneyStop> runStops;
@@ -183,7 +185,7 @@ class SimulatedPaymentLifecycleTests {
         assertEquals(EXPECTED_2A_200KM_FARE, summary.amount());
         assertEquals("SIMULATED", summary.mode());
         assertNotNull(summary.holdExpiresAt());
-        assertTrue(summary.holdExpiresAt().isAfter(LocalDateTime.now()));
+        assertTrue(summary.holdExpiresAt().isAfter(LocalDateTime.now(clock)));
     }
 
     @Test
@@ -382,7 +384,7 @@ class SimulatedPaymentLifecycleTests {
         // Manually expire the hold in the past
         Booking booking = bookingRepository.findByBookingRef(created.bookingRef()).orElseThrow();
         SeatAllocation allocation = booking.getSeatAllocation();
-        allocation.setHoldExpiresAt(LocalDateTime.now().minusMinutes(5));
+        allocation.setHoldExpiresAt(LocalDateTime.now(clock).minusMinutes(5));
         allocationRepository.save(allocation);
 
         assertThrows(SeatHoldExpiredException.class, () ->

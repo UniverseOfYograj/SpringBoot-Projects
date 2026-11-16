@@ -1,5 +1,7 @@
 package in.yograj.learnspringboot.railway_booking.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,11 +17,37 @@ public record BookingResponseDTO(
         String bookingStatus,
         String paymentStatus,
         BigDecimal amount,
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timezone = "UTC")
         LocalDateTime createdAt,
         List<PassengerResponseDTO> passengers,
         FareComponentDTO fareBreakdown,
-        Integer distanceKm
+        Integer distanceKm,
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timezone = "UTC")
+        LocalDateTime holdExpiresAt
 ) {
+    /**
+     * Backward-compatible 14-parameter constructor (without holdExpiresAt).
+     */
+    public BookingResponseDTO(
+            Long bookingId,
+            String bookingRef,
+            String pnr,
+            Long journeyId,
+            Long seatId,
+            String coachNumber,
+            Integer seatNumber,
+            String bookingStatus,
+            String paymentStatus,
+            BigDecimal amount,
+            LocalDateTime createdAt,
+            List<PassengerResponseDTO> passengers,
+            FareComponentDTO fareBreakdown,
+            Integer distanceKm
+    ) {
+        this(bookingId, bookingRef, pnr, journeyId, seatId, coachNumber, seatNumber,
+                bookingStatus, paymentStatus, amount, createdAt, passengers, fareBreakdown, distanceKm, null);
+    }
+
     /**
      * Backward-compatible 10-parameter constructor (Phase 17.16).
      */
@@ -36,7 +64,7 @@ public record BookingResponseDTO(
             LocalDateTime createdAt
     ) {
         this(bookingId, bookingRef, null, journeyId, seatId, coachNumber, seatNumber,
-                bookingStatus, paymentStatus, amount, createdAt, List.of(), null, null);
+                bookingStatus, paymentStatus, amount, createdAt, List.of(), null, null, null);
     }
 
     /**
@@ -56,7 +84,7 @@ public record BookingResponseDTO(
             LocalDateTime createdAt
     ) {
         this(bookingId, bookingRef, pnr, journeyId, seatId, coachNumber, seatNumber,
-                bookingStatus, paymentStatus, amount, createdAt, List.of(), null, null);
+                bookingStatus, paymentStatus, amount, createdAt, List.of(), null, null, null);
     }
 
     /**
@@ -76,7 +104,7 @@ public record BookingResponseDTO(
             List<PassengerResponseDTO> passengers
     ) {
         this(bookingId, bookingRef, null, journeyId, seatId, coachNumber, seatNumber,
-                bookingStatus, paymentStatus, amount, createdAt, passengers, null, null);
+                bookingStatus, paymentStatus, amount, createdAt, passengers, null, null, null);
     }
 
     /**
@@ -98,6 +126,6 @@ public record BookingResponseDTO(
             Integer distanceKm
     ) {
         this(bookingId, bookingRef, null, journeyId, seatId, coachNumber, seatNumber,
-                bookingStatus, paymentStatus, amount, createdAt, passengers, fareBreakdown, distanceKm);
+                bookingStatus, paymentStatus, amount, createdAt, passengers, fareBreakdown, distanceKm, null);
     }
 }

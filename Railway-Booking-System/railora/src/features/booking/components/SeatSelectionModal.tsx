@@ -13,23 +13,24 @@ import {
   ArrowRight,
   User,
   Users,
-  RefreshCw,
   MapPin,
   Receipt,
   Printer,
+  Lock,
+  Smartphone,
+  Building2,
+  Copy,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useAuth } from '@/features/auth/AuthContext';
 import { bookingApi } from '../api';
-import { clearPaymentAttempt, getOrCreatePaymentAttempt } from '../paymentAttempt';
+import { clearPaymentAttempt } from '../paymentAttempt';
 import {
   isMockPaymentEnabled,
   isRazorpayCheckoutEnabled,
-  isSimulatedPaymentEnabled,
   openRazorpayCheckout,
 } from '../razorpayCheckout';
-import { SimulatedCheckoutModal } from './SimulatedCheckoutModal';
 import type {
   BookingResponseDTO,
   CoachAvailabilityDTO,
@@ -42,6 +43,7 @@ import type {
 } from '../types';
 import type { TrainSearchResponseDTO } from '@/features/search/types';
 import { ROUTES } from '@/lib/constants';
+import { parseHoldExpiry } from '@/lib/utils';
 
 export const STANDARD_CLASS_NAMES: Record<string, string> = {
   '1A': 'AC First Class',
@@ -127,9 +129,12 @@ export function SeatSelectionModal({
 
   const [booking, setBooking] = useState<BookingResponseDTO | null>(null);
   const [payment, setPayment] = useState<PaymentResponseDTO | null>(null);
-  const [simulateFailure, setSimulateFailure] = useState(false);
-  const [showSimulatedModal, setShowSimulatedModal] = useState(false);
-  const [paymentAttemptPending, setPaymentAttemptPending] = useState(false);
+  const [paymentMode, setPaymentMode] = useState<'UPI' | 'CARD' | 'NETBANKING'>('UPI');
+  const [upiId, setUpiId] = useState('traveler@okhdfcbank');
+  const [selectedBank, setSelectedBank] = useState('SBI');
+  const [cardNumber, setCardNumber] = useState('4532 •••• •••• 8891');
+  const [cardExpiry, setCardExpiry] = useState('08/29');
+  const [cardCvv, setCardCvv] = useState('742');
   const paymentInFlight = useRef(false);
 
   // Countdown timer for active hold
@@ -169,8 +174,6 @@ export function SeatSelectionModal({
       setBooking(null);
       setPayment(null);
       setError(null);
-      setSimulateFailure(false);
-      setPaymentAttemptPending(false);
       setFareQuote(null);
       return;
     }
@@ -671,8 +674,9 @@ export function SeatSelectionModal({
         seatIdsToHold.every((id) => heldSeatIds.includes(id));
 
       if (!areAllHeld) {
+        let serverHoldExpiresAt: string | null = null;
         if (isBatch && typeof bookingApi.holdSeats === 'function') {
-          await bookingApi.holdSeats(
+          const res = await bookingApi.holdSeats(
             journey.journeyId,
             {
               seatIds: seatIdsToHold,
@@ -685,9 +689,12 @@ export function SeatSelectionModal({
             },
             admissionToken,
           );
+          if (Array.isArray(res) && res.length > 0 && res[0].holdExpiresAt) {
+            serverHoldExpiresAt = res[0].holdExpiresAt;
+          }
         } else {
           // Single-seat hold
-          await bookingApi.holdSeat(
+          const res = await bookingApi.holdSeat(
             journey.journeyId,
             {
               seatId: selectedSeats[0].seatId,
@@ -700,9 +707,17 @@ export function SeatSelectionModal({
             },
             admissionToken,
           );
+          if (res && res.holdExpiresAt) {
+            serverHoldExpiresAt = res.holdExpiresAt;
+          }
         }
         setHeldSeatIds(seatIdsToHold);
-        setHoldExpiresAt(Date.now() + 10 * 60 * 1000);
+        const now = Date.now();
+        const parsedServerHold = parseHoldExpiry(serverHoldExpiresAt);
+        const validHold = parsedServerHold && parsedServerHold - now > 60000
+          ? parsedServerHold
+          : (now + 10 * 60 * 1000);
+        setHoldExpiresAt(validHold);
       }
 
       // Build passenger list
@@ -744,6 +759,12 @@ export function SeatSelectionModal({
       );
 
       setBooking(newBooking);
+      if (newBooking.holdExpiresAt) {
+        const parsedBookingHold = parseHoldExpiry(newBooking.holdExpiresAt);
+        if (parsedBookingHold && parsedBookingHold - Date.now() > 60000) {
+          setHoldExpiresAt(parsedBookingHold);
+        }
+      }
       setStep('payment');
     } catch (err: unknown) {
       const msg =
@@ -804,14 +825,36 @@ export function SeatSelectionModal({
         return;
       }
 
-      const attempt = getOrCreatePaymentAttempt(booking.bookingRef, simulateFailure);
-      setSimulateFailure(attempt.simulateFailure);
-      setPaymentAttemptPending(true);
-      const paymentResult = await bookingApi.payBooking(booking.bookingRef, attempt);
+      const simMethod =
+        paymentMode === 'CARD'
+          ? 'SIMULATED_CARD'
+          : paymentMode === 'NETBANKING'
+          ? 'SIMULATED_NETBANKING'
+          : 'SIMULATED_UPI';
+      const txnKey = `TXN-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+
+      let paymentResult: PaymentResponseDTO;
+      if (typeof bookingApi.simulatePaymentSuccess === 'function') {
+        try {
+          paymentResult = await bookingApi.simulatePaymentSuccess(booking.bookingRef, {
+            idempotencyKey: txnKey,
+            reason: simMethod,
+          });
+        } catch {
+          paymentResult = await bookingApi.payBooking(booking.bookingRef, {
+            paymentMethod: paymentMode,
+            simulateFailure: false,
+          });
+        }
+      } else {
+        paymentResult = await bookingApi.payBooking(booking.bookingRef, {
+          paymentMethod: paymentMode,
+          simulateFailure: false,
+        });
+      }
 
       if (paymentResult.paymentStatus === 'FAILED') {
         clearPaymentAttempt(booking.bookingRef);
-        setPaymentAttemptPending(false);
         if (paymentResult.bookingStatus === 'PENDING_PAYMENT') {
           setError(
             paymentResult.message ||
@@ -829,8 +872,17 @@ export function SeatSelectionModal({
         return;
       }
 
+      // Re-fetch booking from backend to guarantee latest 10-digit PNR and berth allocations
+      try {
+        const refreshed = await bookingApi.getBookingByRef(booking.bookingRef);
+        if (refreshed) {
+          setBooking(refreshed);
+        }
+      } catch {
+        // Continue with current booking
+      }
+
       clearPaymentAttempt(booking.bookingRef);
-      setPaymentAttemptPending(false);
       setPayment(paymentResult);
       setStep('confirmed');
     } catch (err: unknown) {
@@ -910,14 +962,14 @@ export function SeatSelectionModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-navy-950/70 backdrop-blur-sm overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-navy-950/80 backdrop-blur-sm overflow-hidden"
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-headline"
     >
-      <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-surface-border overflow-hidden my-8">
+      <div className="relative w-full max-w-2xl h-[92vh] max-h-[850px] flex flex-col rounded-2xl bg-white shadow-2xl border border-surface-border overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-surface-border bg-surface-subtle/40 px-6 py-4">
+        <div className="flex-shrink-0 flex items-center justify-between border-b border-surface-border bg-surface-subtle/40 px-6 py-4">
           <div className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-navy-700 text-white">
               <Train size={18} />
@@ -958,7 +1010,7 @@ export function SeatSelectionModal({
 
         {/* Visual Step Indicator */}
         {journey && step !== 'confirmed' && (
-          <div className="flex items-center justify-between border-b border-surface-border bg-surface-subtle/20 px-6 py-2.5 text-xs font-semibold">
+          <div className="flex-shrink-0 flex items-center justify-between border-b border-surface-border bg-surface-subtle/20 px-6 py-2.5 text-xs font-semibold">
             <div className={`flex items-center gap-1.5 ${step === 'select-seat' ? 'text-teal-700 font-bold' : 'text-ink-muted'}`}>
               <span className={`flex h-5 w-5 items-center justify-center rounded-full text-2xs ${step === 'select-seat' ? 'bg-teal-700 text-white font-bold' : 'bg-surface-muted text-ink-muted'}`}>1</span>
               <span>Class & Berths</span>
@@ -977,7 +1029,7 @@ export function SeatSelectionModal({
         )}
 
         {/* Modal Body */}
-        <div className="p-6">
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1">
           {error && (
             <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-status-danger-border bg-status-danger-bg p-3.5 text-sm text-status-danger-text">
               <AlertCircle size={18} className="shrink-0 mt-0.5" />
@@ -1612,199 +1664,317 @@ export function SeatSelectionModal({
                 </div>
               </div>
 
-              {/* Payment Gateway Box */}
-              <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-4 mb-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-teal-900 mb-1">
-                  <CreditCard size={16} className="text-teal-700" />
-                  {isRazorpayCheckoutEnabled()
-                    ? 'Secure Payment (Razorpay Test Mode)'
-                    : isSimulatedPaymentEnabled()
-                      ? 'Demo Checkout (Simulated Gateway)'
-                      : isMockPaymentEnabled()
-                        ? 'Instant Payment (Mock Gateway)'
-                        : 'Payments unavailable'}
-                </div>
-                <p className="text-xs text-teal-700 leading-relaxed">
-                  {isRazorpayCheckoutEnabled()
-                    ? 'Payment completion is verified by the Railora server before confirming your booking.'
-                    : isSimulatedPaymentEnabled()
-                      ? 'Interactive payment simulation for demonstration. No real money or bank accounts will be charged.'
-                      : isMockPaymentEnabled()
-                        ? 'Idempotent mock payment simulation verifying transaction isolation and double-spend protection.'
-                        : 'Payment processing is not configured. Please contact support.'}
-                </p>
-              </div>
-
-              {/* Simulated Failure Toggle */}
-              {isMockPaymentEnabled() && (
-                <div className="mb-5 flex items-center gap-2 text-xs text-ink-secondary bg-surface-muted/50 p-2.5 rounded-lg border border-surface-border">
-                  <input
-                    id="simulate-failure-checkbox"
-                    type="checkbox"
-                    checked={simulateFailure}
-                    onChange={(e) => setSimulateFailure(e.target.checked)}
-                    disabled={paymentAttemptPending}
-                    className="rounded border-surface-border text-teal-600 focus:ring-teal-500 h-3.5 w-3.5"
-                  />
-                  <label htmlFor="simulate-failure-checkbox" className="cursor-pointer select-none">
-                    Simulate gateway payment failure (test resilience and retry capability)
-                  </label>
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex items-center justify-end gap-2 border-t border-surface-border pt-4">
-                <Button variant="secondary" size="sm" onClick={() => setStep('select-seat')} disabled={actionLoading}>
-                  Back
-                </Button>
-                {isSimulatedPaymentEnabled() && (
-                  <Button
-                    variant="accent"
-                    size="md"
-                    onClick={() => setShowSimulatedModal(true)}
-                  >
-                    <CreditCard size={15} />
-                    Demo Checkout
-                  </Button>
-                )}
-                {!isSimulatedPaymentEnabled() && (
-                  <Button
-                    variant="accent"
-                    size="md"
-                    onClick={handlePay}
-                    isLoading={actionLoading}
-                    disabled={
-                      (paymentAttemptPending && actionLoading)
-                      || (!isRazorpayCheckoutEnabled() && !isMockPaymentEnabled())
-                      || (isRazorpayCheckoutEnabled() && (!booking.amount || booking.amount <= 0))
-                    }
-                  >
-                    {error ? (
-                      <>
-                        <RefreshCw size={15} />
-                        Retry Payment
-                      </>
-                    ) : (
-                      <>
-                        {isRazorpayCheckoutEnabled()
-                          ? `Pay ₹${booking.amount?.toFixed(2) ?? '—'} with Razorpay`
-                          : isMockPaymentEnabled()
-                            ? `Pay ${booking.amount != null ? `₹${booking.amount.toFixed(2)}` : (totalFare != null ? `₹${totalFare.toFixed(2)}` : 'Unavailable')} & Confirm`
-                            : 'Payments unavailable'}
-                        <CheckCircle2 size={16} />
-                      </>
-                    )}
-                  </Button>
-                )}
-              </div>
-            </div>
-          ) : step === 'confirmed' && payment ? (
-            <div className="text-center py-4">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-teal-50 text-teal-600 mb-3 shadow-inner">
-                <CheckCircle2 size={32} />
-              </div>
-              <h3 className="text-xl font-bold text-ink-primary">Reservation Confirmed!</h3>
-              <p className="text-xs text-ink-muted mt-1">
-                Your ticket has been booked and your {selectedSeats.length > 1 ? 'berths are' : 'berth is'} confirmed.
-              </p>
-
-              <div className="my-5 mx-auto max-w-md rounded-xl border border-surface-border bg-surface-subtle/40 p-4 text-left text-xs space-y-2">
-                {booking?.pnr ? (
-                  <div className="flex justify-between">
-                    <span className="text-ink-muted">PNR:</span>
-                    <span className="font-mono font-bold text-navy-700">{booking.pnr}</span>
-                  </div>
-                ) : (
-                  <div className="flex justify-between">
-                    <span className="text-ink-muted">PNR / Ref:</span>
-                    <span className="font-mono font-bold text-navy-700">{payment.bookingRef}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-ink-muted">Booking Ref:</span>
-                  <span className="font-mono font-bold text-navy-700">{payment.bookingRef}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-ink-muted">Transaction ID:</span>
-                  <span className="font-mono text-ink-primary">{payment.transactionRef}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-ink-muted">Payment Mode:</span>
-                  <span className={payment.paymentMethod?.toUpperCase() === 'SIMULATED' || payment.transactionRef?.startsWith('SIM-') ? 'font-semibold text-teal-700' : 'font-mono text-ink-primary'}>
-                    {payment.paymentMethod?.toUpperCase() === 'SIMULATED' || payment.transactionRef?.startsWith('SIM-')
-                      ? 'SIMULATED (Demo)'
-                      : (payment.paymentMethod || 'Standard')}
+              {/* Payment Mode Selector (IRCTC Style) */}
+              <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-surface-border pb-2">
+                  <span className="text-xs font-bold text-navy-800 flex items-center gap-1.5">
+                    <CreditCard size={15} className="text-teal-600" />
+                    Select Payment Mode
+                  </span>
+                  <span className="flex items-center gap-1 text-2xs text-teal-700 font-medium">
+                    <ShieldCheck size={13} />
+                    256-Bit SSL Encrypted
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-ink-muted">Status:</span>
-                  <Badge variant="teal" size="sm">{payment.bookingStatus}</Badge>
+
+                {/* Tabs */}
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMode('UPI')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
+                      paymentMode === 'UPI'
+                        ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
+                        : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
+                    }`}
+                  >
+                    <Smartphone size={18} className="mb-1 text-teal-600" />
+                    <span>UPI / QR</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMode('CARD')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
+                      paymentMode === 'CARD'
+                        ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
+                        : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
+                    }`}
+                  >
+                    <CreditCard size={18} className="mb-1 text-teal-600" />
+                    <span>Credit / Debit</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMode('NETBANKING')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-semibold transition-interact ${
+                      paymentMode === 'NETBANKING'
+                        ? 'border-teal-600 bg-teal-50/60 text-teal-900 shadow-xs'
+                        : 'border-surface-border hover:bg-surface-subtle text-ink-secondary'
+                    }`}
+                  >
+                    <Building2 size={18} className="mb-1 text-teal-600" />
+                    <span>Net Banking</span>
+                  </button>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-ink-muted">Amount Paid:</span>
-                  <span className="font-mono font-bold text-teal-700">₹{payment.amount?.toFixed(2)}</span>
-                </div>
-                {booking?.distanceKm && (
-                  <div className="flex justify-between">
-                    <span className="text-ink-muted">Distance:</span>
-                    <span className="font-mono font-bold text-ink-primary">{booking.distanceKm} km</span>
-                  </div>
-                )}
-                {booking?.fareBreakdown && (
-                  <div className="flex justify-between">
-                    <span className="text-ink-muted">Breakdown:</span>
-                    <span className="font-mono text-ink-secondary text-2xs">
-                      Base ₹{booking.fareBreakdown.baseFare.toFixed(2)} + Res ₹{booking.fareBreakdown.reservationCharge.toFixed(2)} + SF ₹{booking.fareBreakdown.superfastCharge.toFixed(2)} + GST ₹{(booking.fareBreakdown.tax ?? booking.fareBreakdown.gstAmount ?? 0).toFixed(2)}
-                    </span>
+
+                {/* Tab Content */}
+                {paymentMode === 'UPI' && (
+                  <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
+                    <label className="block text-2xs font-semibold text-ink-secondary">
+                      Enter UPI ID / VPA (Google Pay, PhonePe, Paytm, BHIM)
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={upiId}
+                        onChange={(e) => setUpiId(e.target.value)}
+                        placeholder="e.g. yourname@okhdfcbank"
+                        className="flex-1 rounded-lg border border-surface-border bg-white px-3 py-2 text-xs text-ink-primary font-mono focus:border-teal-500 focus:outline-none"
+                      />
+                      <span className="flex items-center text-2xs text-teal-700 font-semibold px-2 bg-teal-50 rounded-lg border border-teal-200">
+                        Verified
+                      </span>
+                    </div>
+                    <p className="text-3xs text-ink-muted">
+                      A payment request will be authorized instantly to confirm your reservation.
+                    </p>
                   </div>
                 )}
 
-                {/* Confirmed Passenger List */}
-                {booking?.passengers && booking.passengers.length > 0 && (
-                  <div className="border-t border-surface-border/60 pt-2 mt-2">
-                    <span className="text-2xs font-semibold text-ink-secondary block mb-1">
-                      Confirmed Passengers:
-                    </span>
-                    <div className="space-y-1">
-                      {booking.passengers.map((p, idx) => (
-                        <div
-                          key={p.passengerId || idx}
-                          className="flex justify-between text-2xs bg-white rounded px-2 py-1 border border-surface-border/50"
+                {paymentMode === 'CARD' && (
+                  <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
+                    <div>
+                      <label className="block text-2xs font-semibold text-ink-secondary mb-1">
+                        Card Number
+                      </label>
+                      <input
+                        type="text"
+                        value={cardNumber}
+                        onChange={(e) => setCardNumber(e.target.value)}
+                        className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-xs font-mono text-ink-primary focus:border-teal-500 focus:outline-none"
+                        placeholder="•••• •••• •••• ••••"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-2xs font-semibold text-ink-secondary mb-1">
+                          Expiry (MM/YY)
+                        </label>
+                        <input
+                          type="text"
+                          value={cardExpiry}
+                          onChange={(e) => setCardExpiry(e.target.value)}
+                          className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-xs font-mono text-ink-primary focus:border-teal-500 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-2xs font-semibold text-ink-secondary mb-1">
+                          CVV
+                        </label>
+                        <input
+                          type="password"
+                          value={cardCvv}
+                          maxLength={4}
+                          onChange={(e) => setCardCvv(e.target.value)}
+                          className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-xs font-mono text-ink-primary focus:border-teal-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {paymentMode === 'NETBANKING' && (
+                  <div className="rounded-lg bg-surface-subtle/50 p-3 space-y-2 text-xs">
+                    <label className="block text-2xs font-semibold text-ink-secondary mb-1">
+                      Choose Your Bank
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['SBI', 'HDFC', 'ICICI', 'AXIS', 'PNB', 'KOTAK'].map((bank) => (
+                        <button
+                          key={bank}
+                          type="button"
+                          onClick={() => setSelectedBank(bank)}
+                          className={`px-3 py-2 rounded-lg text-xs font-bold border transition-interact text-center ${
+                            selectedBank === bank
+                              ? 'bg-navy-800 text-white border-navy-800'
+                              : 'bg-white text-ink-primary border-surface-border hover:border-teal-500'
+                          }`}
                         >
-                          <span className="font-medium text-ink-primary">
-                            {idx + 1}. {p.fullName} ({p.gender}, {p.age}y)
-                          </span>
-                          <span className="font-mono font-bold text-teal-700">
-                            Coach {p.coachNumber || booking.coachNumber}, #{p.seatNumber}
-                          </span>
-                        </div>
+                          {bank}
+                        </button>
                       ))}
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center justify-center gap-3 pt-2">
+              {/* Actions */}
+              <div className="flex items-center justify-between border-t border-surface-border pt-4">
+                <Button variant="secondary" size="sm" onClick={() => setStep('passengers')} disabled={actionLoading}>
+                  Back to Passengers
+                </Button>
+                <Button
+                  variant="accent"
+                  size="md"
+                  onClick={handlePay}
+                  isLoading={actionLoading}
+                  className="font-bold shadow-md"
+                >
+                  <Lock size={14} />
+                  Pay ₹{booking.amount != null ? booking.amount.toFixed(2) : (totalFare != null ? totalFare.toFixed(2) : '')} & Confirm Ticket
+                  <ArrowRight size={14} />
+                </Button>
+              </div>
+            </div>
+          ) : step === 'confirmed' && payment ? (
+            <div className="text-center py-2 space-y-4">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-teal-50 text-teal-600 shadow-sm border border-teal-200">
+                <CheckCircle2 size={32} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-ink-primary">Reservation Confirmed!</h3>
+                <p className="text-xs text-ink-muted mt-0.5">
+                  Your ticket has been booked successfully and berth allocations are confirmed.
+                </p>
+              </div>
+
+              {/* PNR Highlight Card */}
+              <div className="mx-auto max-w-lg rounded-2xl border-2 border-teal-500/30 bg-teal-50/60 p-4 text-center shadow-xs">
+                <span className="text-2xs font-extrabold uppercase tracking-widest text-teal-800">
+                  Indian Railways Electronic Ticket • PNR Number
+                </span>
+                <div className="flex items-center justify-center gap-2.5 my-1.5">
+                  <span className="font-mono text-2xl sm:text-3xl font-black text-navy-800 tracking-wider">
+                    {booking?.pnr || payment.bookingRef}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pnrToCopy = booking?.pnr || payment.bookingRef;
+                      void navigator.clipboard.writeText(pnrToCopy);
+                      setRestoredNotification('PNR copied to clipboard!');
+                      setTimeout(() => setRestoredNotification(null), 3000);
+                    }}
+                    title="Copy PNR"
+                    className="rounded-lg p-1.5 text-teal-700 hover:bg-teal-100 transition-interact"
+                  >
+                    <Copy size={18} />
+                  </button>
+                </div>
+                <div className="flex items-center justify-center gap-2">
+                  <span className="inline-block px-3 py-0.5 rounded-full text-2xs font-extrabold bg-teal-600 text-white shadow-2xs">
+                    STATUS: CONFIRMED (CNF)
+                  </span>
+                  <span className="text-2xs text-ink-muted font-mono">
+                    Txn: {payment.transactionRef}
+                  </span>
+                </div>
+              </div>
+
+              {/* Journey Details Card */}
+              <div className="mx-auto max-w-lg rounded-xl border border-surface-border bg-surface-subtle/30 p-4 text-left text-xs space-y-3">
+                <div className="grid grid-cols-2 gap-3 border-b border-surface-border pb-3">
+                  <div>
+                    <span className="text-ink-muted block text-2xs">Train</span>
+                    <p className="font-bold text-navy-800">{train.trainNumber} - {train.trainName}</p>
+                  </div>
+                  <div>
+                    <span className="text-ink-muted block text-2xs">Class</span>
+                    <p className="font-bold text-navy-800">
+                      {currentClass?.className ?? selectedClassCode ?? 'Standard'} ({currentClass?.classCode ?? booking?.coachNumber})
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-ink-muted block text-2xs">From / Departure</span>
+                    <p className="font-semibold text-ink-primary">
+                      {train.fromStationName} ({train.fromStationCode}) • {train.fromDepartureTime ?? 'Scheduled'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-ink-muted block text-2xs">To / Arrival</span>
+                    <p className="font-semibold text-ink-primary">
+                      {train.toStationName} ({train.toStationCode}) • {train.toArrivalTime ?? 'Scheduled'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Confirmed Passenger & Berth Table */}
+                {booking?.passengers && booking.passengers.length > 0 && (
+                  <div>
+                    <span className="text-2xs font-bold text-ink-secondary block mb-1.5">
+                      Confirmed Passengers & Berths:
+                    </span>
+                    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+                      <table className="w-full text-left text-2xs">
+                        <thead className="bg-surface-subtle text-ink-muted border-b border-surface-border">
+                          <tr>
+                            <th className="py-1.5 px-3">#</th>
+                            <th className="py-1.5 px-3">Passenger</th>
+                            <th className="py-1.5 px-3">Age/Sex</th>
+                            <th className="py-1.5 px-3">Coach</th>
+                            <th className="py-1.5 px-3">Berth</th>
+                            <th className="py-1.5 px-3">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-border">
+                          {booking.passengers.map((p, idx) => (
+                            <tr key={p.passengerId || idx} className="hover:bg-teal-50/30">
+                              <td className="py-2 px-3 font-semibold text-ink-muted">{idx + 1}</td>
+                              <td className="py-2 px-3 font-bold text-ink-primary">{p.fullName}</td>
+                              <td className="py-2 px-3 text-ink-secondary">{p.age} / {p.gender}</td>
+                              <td className="py-2 px-3 font-mono font-bold text-navy-800">{p.coachNumber || booking.coachNumber}</td>
+                              <td className="py-2 px-3 font-mono font-bold text-teal-700">#{p.seatNumber} ({p.berthPreference || 'LOWER'})</td>
+                              <td className="py-2 px-3">
+                                <span className="px-1.5 py-0.5 rounded text-3xs font-extrabold bg-teal-100 text-teal-800">
+                                  CNF
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Payment Summary */}
+                <div className="flex items-center justify-between border-t border-surface-border pt-2 text-2xs">
+                  <span className="text-ink-muted">Total Fare Paid:</span>
+                  <span className="font-mono text-sm font-black text-teal-700">
+                    ₹{payment.amount?.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                 <Button
                   variant="secondary"
-                  size="sm"
+                  size="md"
                   onClick={() => window.print()}
                   aria-label="Print Ticket"
+                  className="gap-1.5 font-semibold"
                 >
-                  <Printer size={14} />
-                  Print Ticket
+                  <Printer size={16} />
+                  Print E-Ticket
                 </Button>
                 <Button
                   variant="primary"
-                  size="sm"
+                  size="md"
                   onClick={() => {
                     onClose();
                     navigate(ROUTES.BOOKINGS);
                   }}
+                  className="gap-1.5 font-semibold"
                 >
+                  <Receipt size={16} />
                   View in My Bookings
                 </Button>
-                <Button variant="secondary" size="sm" onClick={onClose}>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={onClose}
+                >
                   Done
                 </Button>
               </div>
@@ -1812,38 +1982,6 @@ export function SeatSelectionModal({
           ) : null}
         </div>
       </div>
-
-      {showSimulatedModal && booking && (
-        <SimulatedCheckoutModal
-          isOpen={showSimulatedModal}
-          onClose={() => setShowSimulatedModal(false)}
-          bookingRef={booking.bookingRef}
-          initialSummary={{
-            bookingRef: booking.bookingRef,
-            bookingId: booking.bookingId,
-            pnr: booking.pnr,
-            trainNumber: train.trainNumber,
-            trainName: train.trainName,
-            fromStationCode: train.fromStationCode,
-            fromStationName: train.fromStationName,
-            toStationCode: train.toStationCode,
-            toStationName: train.toStationName,
-            journeyDate: travelDate,
-            departureTime: train.fromDepartureTime ?? null,
-            arrivalTime: train.toArrivalTime ?? null,
-            coachNumber: booking.coachNumber,
-            seatNumber: booking.seatNumber,
-            amount: booking.amount,
-            bookingStatus: booking.bookingStatus,
-            paymentStatus: booking.paymentStatus,
-          }}
-          onSuccess={(res) => {
-            setShowSimulatedModal(false);
-            setPayment(res);
-            setStep('confirmed');
-          }}
-        />
-      )}
     </div>
   );
 }

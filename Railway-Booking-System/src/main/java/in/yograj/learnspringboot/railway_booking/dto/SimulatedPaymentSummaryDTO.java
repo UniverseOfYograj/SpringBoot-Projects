@@ -1,5 +1,7 @@
 package in.yograj.learnspringboot.railway_booking.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -26,6 +28,7 @@ public record SimulatedPaymentSummaryDTO(
         BigDecimal amount,
         String bookingStatus,
         String paymentStatus,
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timezone = "UTC")
         LocalDateTime holdExpiresAt,
         String mode
 ) {

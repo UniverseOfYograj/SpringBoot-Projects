@@ -153,6 +153,7 @@ export interface BookingResponseDTO {
   paymentStatus: 'PENDING' | 'SUCCESS' | 'FAILED' | string;
   amount: number | null;
   createdAt: string;
+  holdExpiresAt?: string | null;
   passengers?: PassengerResponseDTO[];
   fareBreakdown?: FareComponentDTO;
   distanceKm?: number;
@@ -185,6 +186,7 @@ export interface BookingDetailResponseDTO {
   paymentStatus: 'PENDING' | 'SUCCESS' | 'FAILED' | string;
   amount: number | null;
   createdAt: string;
+  holdExpiresAt?: string | null;
   passengers?: PassengerResponseDTO[];
   fareBreakdown?: FareComponentDTO;
   distanceKm?: number;
@@ -231,6 +233,37 @@ export interface SimulatedPaymentSummaryDTO {
   paymentStatus: string;
   holdExpiresAt: string | null;
   mode: string;
+}
+
+export interface PublicPassengerDTO {
+  passengerId?: number;
+  fullName: string;
+  age?: number;
+  gender?: string;
+  coachNumber?: string;
+  seatNumber?: number;
+  berthPreference?: string;
+  status?: string;
+}
+
+export interface PublicPnrResponseDTO {
+  pnr: string;
+  bookingRef: string;
+  trainNumber: string;
+  trainName: string;
+  fromStationCode: string;
+  fromStationName: string;
+  toStationCode: string;
+  toStationName: string;
+  journeyDate: string;
+  departureTime?: string;
+  arrivalTime?: string;
+  coachNumber?: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  totalPassengers: number;
+  passengers: PublicPassengerDTO[];
+  createdAt: string;
 }
 
 export interface SimulatedPaymentRequestDTO {

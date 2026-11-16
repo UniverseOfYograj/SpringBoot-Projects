@@ -367,10 +367,10 @@ export function PnrEnquiry({ initialPnr, onClear }: PnrEnquiryProps) {
                   </p>
                 </div>
                 <div>
-                  <span className="text-ink-muted">Booked By</span>
-                  <p className="font-semibold text-ink-primary flex items-center gap-1 mt-0.5">
-                    <UserIcon size={13} className="text-teal-600" />
-                    {booking.username}
+                  <span className="text-ink-muted">Reservation Account</span>
+                  <p className="font-semibold text-ink-primary flex items-center gap-1 mt-0.5 truncate">
+                    <UserIcon size={13} className="text-teal-600 shrink-0" />
+                    {booking.username || 'Authorized Reservation'}
                   </p>
                 </div>
                 <div>
@@ -380,6 +380,30 @@ export function PnrEnquiry({ initialPnr, onClear }: PnrEnquiryProps) {
                   </p>
                 </div>
               </div>
+
+              {booking.passengers && booking.passengers.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-surface-border/50">
+                  <span className="text-2xs font-semibold uppercase text-ink-muted block mb-2">
+                    Passengers ({booking.passengers.length})
+                  </span>
+                  <div className="space-y-1.5">
+                    {booking.passengers.map((p, idx) => (
+                      <div
+                        key={p.passengerId || idx}
+                        className="flex items-center justify-between text-xs bg-surface-card px-3 py-1.5 rounded-lg border border-surface-border/40"
+                      >
+                        <span className="font-medium text-ink-primary">
+                          {idx + 1}. {p.fullName} {p.age ? `(${p.age}${p.gender ? `, ${p.gender}` : ''})` : ''}
+                        </span>
+                        <span className="font-mono font-semibold text-navy-700">
+                          {p.coachNumber ? `${p.coachNumber} - ` : ''}Seat {p.seatNumber || booking.seatNumber}
+                          {p.berthPreference ? ` (${p.berthPreference})` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Bottom Meta Bar */}

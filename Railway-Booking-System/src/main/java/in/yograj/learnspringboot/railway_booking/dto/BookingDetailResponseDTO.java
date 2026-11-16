@@ -1,5 +1,7 @@
 package in.yograj.learnspringboot.railway_booking.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -32,11 +34,57 @@ public record BookingDetailResponseDTO(
         String bookingStatus,
         String paymentStatus,
         BigDecimal amount,
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timezone = "UTC")
         LocalDateTime createdAt,
         List<PassengerResponseDTO> passengers,
         FareComponentDTO fareBreakdown,
-        Integer distanceKm
+        Integer distanceKm,
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timezone = "UTC")
+        LocalDateTime holdExpiresAt
 ) {
+    /**
+     * Backward-compatible 29-parameter constructor (without holdExpiresAt).
+     */
+    public BookingDetailResponseDTO(
+            Long bookingId,
+            String bookingRef,
+            String pnr,
+            Long userId,
+            String username,
+            Long journeyId,
+            String trainNumber,
+            String trainName,
+            String fromStationCode,
+            String fromStationName,
+            String toStationCode,
+            String toStationName,
+            LocalDate journeyDate,
+            LocalTime departureTime,
+            LocalTime arrivalTime,
+            Long coachId,
+            String coachNumber,
+            String coachType,
+            Long seatId,
+            Integer seatNumber,
+            String seatType,
+            Long seatAllocationId,
+            String bookingStatus,
+            String paymentStatus,
+            BigDecimal amount,
+            LocalDateTime createdAt,
+            List<PassengerResponseDTO> passengers,
+            FareComponentDTO fareBreakdown,
+            Integer distanceKm
+    ) {
+        this(
+                bookingId, bookingRef, pnr, userId, username, journeyId, trainNumber, trainName,
+                fromStationCode, fromStationName, toStationCode, toStationName, journeyDate,
+                departureTime, arrivalTime, coachId, coachNumber, coachType, seatId,
+                seatNumber, seatType, seatAllocationId, bookingStatus, paymentStatus,
+                amount, createdAt, passengers, fareBreakdown, distanceKm, null
+        );
+    }
+
     /**
      * Backward-compatible 25-parameter constructor (Phase 17.16 without PNR).
      */
@@ -72,7 +120,7 @@ public record BookingDetailResponseDTO(
                 fromStationCode, fromStationName, toStationCode, toStationName, journeyDate,
                 departureTime, arrivalTime, coachId, coachNumber, coachType, seatId,
                 seatNumber, seatType, seatAllocationId, bookingStatus, paymentStatus,
-                amount, createdAt, List.of(), null, null
+                amount, createdAt, List.of(), null, null, null
         );
     }
 
@@ -112,7 +160,7 @@ public record BookingDetailResponseDTO(
                 fromStationCode, fromStationName, toStationCode, toStationName, journeyDate,
                 departureTime, arrivalTime, coachId, coachNumber, coachType, seatId,
                 seatNumber, seatType, seatAllocationId, bookingStatus, paymentStatus,
-                amount, createdAt, List.of(), null, null
+                amount, createdAt, List.of(), null, null, null
         );
     }
 
@@ -152,7 +200,7 @@ public record BookingDetailResponseDTO(
                 fromStationCode, fromStationName, toStationCode, toStationName, journeyDate,
                 departureTime, arrivalTime, coachId, coachNumber, coachType, seatId,
                 seatNumber, seatType, seatAllocationId, bookingStatus, paymentStatus,
-                amount, createdAt, passengers, null, null
+                amount, createdAt, passengers, null, null, null
         );
     }
 
@@ -194,7 +242,7 @@ public record BookingDetailResponseDTO(
                 fromStationCode, fromStationName, toStationCode, toStationName, journeyDate,
                 departureTime, arrivalTime, coachId, coachNumber, coachType, seatId,
                 seatNumber, seatType, seatAllocationId, bookingStatus, paymentStatus,
-                amount, createdAt, passengers, fareBreakdown, distanceKm
+                amount, createdAt, passengers, fareBreakdown, distanceKm, null
         );
     }
 }

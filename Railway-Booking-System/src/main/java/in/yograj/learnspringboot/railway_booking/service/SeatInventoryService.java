@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -35,6 +36,13 @@ public class SeatInventoryService {
     private final SeatRepository seatRepository;
     private final UserRepository userRepository;
     private final FareCalculationService fareCalculationService;
+
+    @Autowired(required = false)
+    private Clock clock = Clock.systemUTC();
+
+    public void setClock(Clock clock) {
+        this.clock = clock != null ? clock : Clock.systemUTC();
+    }
 
     @Autowired
     public SeatInventoryService(JourneySeatInventoryRepository inventoryRepository,
@@ -336,7 +344,7 @@ public class SeatInventoryService {
             throw new BadRequestException("Legacy seat hold cannot be safely assigned to a user");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         List<SeatAllocation> allocations = allocationRepository
                 .findByInventory_InventoryId(inventory.getInventoryId());
         List<SeatAllocation> expiredAllocations = new ArrayList<>();
@@ -376,7 +384,7 @@ public class SeatInventoryService {
         JourneySeatInventory inventory = inventoryRepository.findByJourneyAndSeatForUpdate(journeyId, seatId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Seat inventory not found for journeyId=" + journeyId + ", seatId=" + seatId));
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         allocationRepository.findByInventory_InventoryIdAndStatus(inventory.getInventoryId(), HOLD)
                 .forEach(allocation -> {
                     allocation.setStatus(RELEASED);
@@ -402,7 +410,7 @@ public class SeatInventoryService {
         if (!HOLD.equalsIgnoreCase(inventory.getStatus())) {
             return;
         }
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         if (inventory.getHoldExpiresAt() != null && !inventory.getHoldExpiresAt().isAfter(now)) {
             inventory.setStatus(AVAILABLE);
             inventory.setHoldExpiresAt(null);
@@ -471,7 +479,7 @@ public class SeatInventoryService {
                     inventory.setCoach(coach);
                     inventory.setSeat(seat);
                     inventory.setStatus(AVAILABLE);
-                    inventory.setUpdatedAt(LocalDateTime.now());
+                    inventory.setUpdatedAt(LocalDateTime.now(clock));
                     response.add(mapAvailability(inventoryRepository.save(inventory), null));
                 }
             }
@@ -533,7 +541,7 @@ public class SeatInventoryService {
     private SeatAvailabilityResponseDTO mapAvailability(JourneySeatInventory inventory, JourneySegment segment) {
         List<SeatAllocation> allocations = allocationRepository
                 .findByInventory_InventoryId(inventory.getInventoryId());
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         SeatAllocation firstBlocking = allocations.stream()
                 .filter(allocation -> {
                     if (segment == null) {

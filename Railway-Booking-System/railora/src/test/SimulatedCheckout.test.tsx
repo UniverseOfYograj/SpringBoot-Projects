@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SimulatedCheckoutModal } from '@/features/booking/components/SimulatedCheckoutModal';
 import { bookingApi } from '@/features/booking/api';
@@ -109,6 +109,11 @@ describe('SimulatedCheckoutModal', () => {
     const successBtn = await screen.findByRole('button', { name: /simulate successful payment/i });
     fireEvent.click(successBtn);
 
+    // Verify Confirmation Dialog appears
+    expect(screen.getByText(/Are you sure you want to pay ₹500\.00\?/i)).toBeInTheDocument();
+    const okPayBtn = screen.getByRole('button', { name: /OK, Pay/i });
+    fireEvent.click(okPayBtn);
+
     // Verify success API call with an idempotency key
     await waitFor(() => {
       expect(mockedBookingApi.simulatePaymentSuccess).toHaveBeenCalledWith(
@@ -197,6 +202,10 @@ describe('SimulatedCheckoutModal', () => {
     // Now click simulate success on retry
     fireEvent.click(screen.getByRole('button', { name: /simulate successful payment/i }));
 
+    // Verify Confirmation Dialog appears on retry
+    expect(screen.getByText(/Are you sure you want to pay ₹500\.00\?/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /OK, Pay/i }));
+
     await waitFor(() => {
       expect(mockedBookingApi.simulatePaymentSuccess).toHaveBeenCalled();
     });
@@ -208,5 +217,35 @@ describe('SimulatedCheckoutModal', () => {
 
     // Verify final success screen
     expect(await screen.findByRole('heading', { name: /reservation confirmed!/i })).toBeInTheDocument();
+  });
+
+  it('does not initiate payment when Cancel is clicked in the confirmation dialog', async () => {
+    mockedBookingApi.getSimulatedPaymentSummary.mockResolvedValueOnce(mockSummary);
+
+    render(
+      <MemoryRouter>
+        <SimulatedCheckoutModal
+          isOpen={true}
+          onClose={vi.fn()}
+          bookingRef="RB-TEST-SIM-001"
+        />
+      </MemoryRouter>,
+    );
+
+    const successBtn = await screen.findByRole('button', { name: /simulate successful payment/i });
+    fireEvent.click(successBtn);
+
+    // Verify Confirmation Dialog appears
+    const confirmDialog = screen.getByRole('dialog', { name: /confirm payment/i });
+    expect(within(confirmDialog).getByText(/Are you sure you want to pay ₹500\.00\?/i)).toBeInTheDocument();
+    const cancelBtn = within(confirmDialog).getByRole('button', { name: /cancel/i });
+    fireEvent.click(cancelBtn);
+
+    // Confirmation dialog is closed
+    expect(screen.queryByText(/Are you sure you want to pay/i)).not.toBeInTheDocument();
+
+    // Payment APIs were not called
+    expect(mockedBookingApi.simulatePaymentSuccess).not.toHaveBeenCalled();
+    expect(mockedBookingApi.simulatePaymentFailure).not.toHaveBeenCalled();
   });
 });

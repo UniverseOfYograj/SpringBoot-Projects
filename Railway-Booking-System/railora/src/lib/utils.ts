@@ -45,3 +45,18 @@ export function formatCurrency(amount: number | string | null | undefined): stri
     maximumFractionDigits: 0,
   }).format(num);
 }
+
+/**
+ * Safely parses a UTC hold expiry timestamp (ISO-8601 string).
+ * If the string lacks timezone indicator (Z or offset), treats it as UTC to avoid local timezone offset drift.
+ * Returns epoch milliseconds, or null if invalid/empty.
+ */
+export function parseHoldExpiry(expiresAt: string | null | undefined): number | null {
+  if (!expiresAt) return null;
+  const trimmed = expiresAt.trim();
+  if (!trimmed) return null;
+  const hasTimezone = trimmed.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(trimmed);
+  const normalized = hasTimezone ? trimmed : `${trimmed}Z`;
+  const time = new Date(normalized).getTime();
+  return isNaN(time) ? null : time;
+}

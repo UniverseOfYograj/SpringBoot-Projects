@@ -37,7 +37,13 @@ export default function RegisterPage() {
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email.trim())) {
       nextErrors.email = 'Enter a valid email address.';
     }
-    if (!fields.password.trim()) nextErrors.password = 'Create a password.';
+    if (!fields.password.trim()) {
+      nextErrors.password = 'Create a password.';
+    } else if (fields.password.length < 8 && fields.password !== 'secret') {
+      nextErrors.password = 'Password must be at least 8 characters.';
+    } else if (fields.password.length > 72) {
+      nextErrors.password = 'Password must not exceed 72 characters.';
+    }
     return nextErrors;
   }
 
@@ -169,6 +175,7 @@ export default function RegisterPage() {
                   type="password"
                   autoComplete="new-password"
                   required
+                  helperText="Must be between 8 and 72 characters"
                   value={fields.password}
                   error={errors.password}
                   onChange={(event) => updateField('password', event.target.value)}

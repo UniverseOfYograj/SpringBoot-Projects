@@ -28,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -71,6 +72,13 @@ public class BookingService {
 
     public void setSimulatedPaymentEnabled(boolean simulatedPaymentEnabled) {
         this.simulatedPaymentEnabled = simulatedPaymentEnabled;
+    }
+
+    @Autowired(required = false)
+    private Clock clock = Clock.systemUTC();
+
+    public void setClock(Clock clock) {
+        this.clock = clock != null ? clock : Clock.systemUTC();
     }
 
     public boolean isSimulatedPaymentEnabled() {
@@ -196,7 +204,7 @@ public class BookingService {
                     .sorted(Comparator.comparing(PassengerRequestDTO::seatId))
                     .toList();
 
-            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime now = LocalDateTime.now(clock);
             List<JourneySeatInventory> lockedInventories = new ArrayList<>();
             List<SeatAllocation> validAllocations = new ArrayList<>();
 
@@ -474,7 +482,7 @@ public class BookingService {
             throw new IllegalStateException("Booking does not have associated seat allocations");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         String txnRef = "TXN-" + UUID.randomUUID().toString().replace("-", "").toUpperCase();
         String idempotencyKey = safeRequest.idempotencyKey() != null && !safeRequest.idempotencyKey().isBlank()
                 ? safeRequest.idempotencyKey().trim()
@@ -714,7 +722,7 @@ public class BookingService {
             }
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
 
         // 5. Lock parent inventories and normalize holds/blocks across all passenger seats
         List<Seat> seatsToRelease = new ArrayList<>();
@@ -865,12 +873,53 @@ public class BookingService {
         if (username != null && !username.isBlank()) {
             User user = userRepository.findByUsername(username).orElse(null);
             if (user != null && (isAdmin(user) || booking.getUser().getUserId().equals(user.getUserId()))) {
-                return toDetailResponse(booking);
+                return toDetailResponse(booking, false);
             }
         }
 
-        // Public PNR enquiry support
-        return toDetailResponse(booking);
+        // Public PNR enquiry support: sanitized to protect privacy
+        return toDetailResponse(booking, true);
+    }
+
+    @Transactional(readOnly = true)
+    public PublicPnrResponseDTO getPublicPnr(String pnr) {
+        BookingDetailResponseDTO detail = getBookingByPnr(pnr, null);
+        List<PublicPnrResponseDTO.PublicPassengerDTO> publicPassengers = detail.passengers() != null
+                ? detail.passengers().stream()
+                .map(p -> new PublicPnrResponseDTO.PublicPassengerDTO(
+                        detail.passengers().indexOf(p) + 1,
+                        p.fullName(),
+                        p.gender(),
+                        p.coachNumber(),
+                        p.seatNumber(),
+                        p.seatType(),
+                        detail.bookingStatus()
+                ))
+                .toList()
+                : List.of();
+
+        return new PublicPnrResponseDTO(
+                detail.pnr(),
+                detail.bookingRef(),
+                detail.trainNumber(),
+                detail.trainName(),
+                detail.fromStationCode(),
+                detail.fromStationName(),
+                detail.toStationCode(),
+                detail.toStationName(),
+                detail.journeyDate(),
+                detail.departureTime(),
+                detail.arrivalTime(),
+                detail.coachNumber(),
+                detail.coachType(),
+                detail.seatNumber(),
+                detail.seatType(),
+                detail.bookingStatus(),
+                detail.paymentStatus(),
+                detail.amount(),
+                detail.distanceKm(),
+                publicPassengers
+        );
     }
 
     @Transactional(readOnly = true)
@@ -899,6 +948,10 @@ public class BookingService {
     }
 
     public BookingDetailResponseDTO toDetailResponse(Booking booking) {
+        return toDetailResponse(booking, false);
+    }
+
+    public BookingDetailResponseDTO toDetailResponse(Booking booking, boolean sanitize) {
         Journey journey = booking.getJourney();
         Train train = journey != null ? journey.getTrain() : null;
         Station fromStation = journey != null ? journey.getFromStation() : null;
@@ -906,9 +959,10 @@ public class BookingService {
         Coach coach = booking.getCoach();
         Seat seat = booking.getSeat();
         SeatAllocation allocation = booking.getSeatAllocation();
-        User bookingUser = booking.getUser();
+        User bookingUser = sanitize ? null : booking.getUser();
+        LocalDateTime holdExpiresAt = allocation != null ? allocation.getHoldExpiresAt() : null;
 
-        List<PassengerResponseDTO> passengerDTOs = mapPassengers(booking);
+        List<PassengerResponseDTO> passengerDTOs = mapPassengers(booking, sanitize);
         FareComponentDTO fareBreakdown = fareCalculationService != null
                 ? fareCalculationService.extractPerPassengerBreakdown(booking.getFareBreakdownJson())
                 : null;
@@ -942,15 +996,18 @@ public class BookingService {
                 booking.getCreatedAt(),
                 passengerDTOs,
                 fareBreakdown,
-                booking.getDistanceKm()
+                booking.getDistanceKm(),
+                holdExpiresAt
         );
     }
 
     private BookingResponseDTO toResponse(Booking booking) {
-        List<PassengerResponseDTO> passengerDTOs = mapPassengers(booking);
+        List<PassengerResponseDTO> passengerDTOs = mapPassengers(booking, false);
         FareComponentDTO fareBreakdown = fareCalculationService != null
                 ? fareCalculationService.extractPerPassengerBreakdown(booking.getFareBreakdownJson())
                 : null;
+        SeatAllocation allocation = booking.getSeatAllocation();
+        LocalDateTime holdExpiresAt = allocation != null ? allocation.getHoldExpiresAt() : null;
 
         return new BookingResponseDTO(
                 booking.getBookingId(),
@@ -966,18 +1023,23 @@ public class BookingService {
                 booking.getCreatedAt(),
                 passengerDTOs,
                 fareBreakdown,
-                booking.getDistanceKm()
+                booking.getDistanceKm(),
+                holdExpiresAt
         );
     }
 
     private List<PassengerResponseDTO> mapPassengers(Booking booking) {
+        return mapPassengers(booking, false);
+    }
+
+    private List<PassengerResponseDTO> mapPassengers(Booking booking, boolean sanitize) {
         if (booking.getPassengers() == null || booking.getPassengers().isEmpty()) {
             return List.of();
         }
         return booking.getPassengers().stream()
                 .map(p -> new PassengerResponseDTO(
                         p.getPassengerId(),
-                        p.getFullName(),
+                        sanitize ? maskPassengerName(p.getFullName()) : p.getFullName(),
                         p.getAge(),
                         p.getGender(),
                         p.getBerthPreference(),
@@ -990,6 +1052,28 @@ public class BookingService {
                         p.getSeatAllocation() != null ? p.getSeatAllocation().getSeatAllocationId() : null
                 ))
                 .toList();
+    }
+
+    private String maskPassengerName(String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return "Passenger";
+        }
+        String[] parts = fullName.trim().split("\\s+");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
+            if (part.length() <= 1) {
+                sb.append("*");
+            } else if (part.length() == 2) {
+                sb.append(part.charAt(0)).append("*");
+            } else {
+                sb.append(part.charAt(0)).append("*".repeat(part.length() - 1));
+            }
+            if (i < parts.length - 1) {
+                sb.append(" ");
+            }
+        }
+        return sb.toString();
     }
 
     private String generateUniquePnr() {
@@ -1076,7 +1160,7 @@ public class BookingService {
             throw new IllegalStateException("Booking does not have associated seat allocations");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         boolean anyExpired = allocations.stream().anyMatch(a -> a.getHoldExpiresAt() != null && !a.getHoldExpiresAt().isAfter(now));
         if (anyExpired) {
             for (SeatAllocation a : allocations) {
@@ -1213,7 +1297,7 @@ public class BookingService {
             throw new IllegalStateException("Booking does not have an associated seat allocation");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         String txnRef = "SIM-" + UUID.randomUUID().toString().replace("-", "").toUpperCase();
 
         if (booking.getAmount() == null || booking.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
@@ -1424,7 +1508,7 @@ public class BookingService {
             throw new IllegalStateException("Booking does not have an associated seat allocation");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         String txnRef = "SIM-" + UUID.randomUUID().toString().replace("-", "").toUpperCase();
 
         if (booking.getAmount() == null || booking.getAmount().compareTo(BigDecimal.ZERO) <= 0) {

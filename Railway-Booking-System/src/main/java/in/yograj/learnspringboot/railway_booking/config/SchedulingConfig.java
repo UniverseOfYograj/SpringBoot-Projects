@@ -14,6 +14,6 @@ public class SchedulingConfig {
     @Bean
     @ConditionalOnMissingBean
     public Clock clock() {
-        return Clock.systemDefaultZone();
+        return Clock.systemUTC();
     }
 }
